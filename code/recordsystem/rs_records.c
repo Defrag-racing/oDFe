@@ -7,6 +7,6 @@ qboolean RS_IsClientTimerStop( const char *s) {
 	return startsWith(s, "ClientTimerStop: ") ? qtrue: qfalse;
 }
 
-void RS_CreateRecord(void){
+void RS_CreateRecord(const char *s){
   RS_GameSendServerCommand( -1, "print \"^5You have finished\n\"" );
 }

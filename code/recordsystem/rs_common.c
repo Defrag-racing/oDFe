@@ -23,8 +23,7 @@ Sys_CreateThread
 Create a new thread of execution
 ===============
 */
-void Sys_CreateThread(void (*function)(void)) {
-    // POSIX implementation (Linux, macOS, etc.)
+void Sys_CreateThread(void (*function)(const char *), const char *arg) {
     pthread_t threadHandle;
     pthread_attr_t attr;
     int result;
@@ -34,10 +33,11 @@ void Sys_CreateThread(void (*function)(void)) {
     // freed when it exits
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     
+    // Cast the function pointer and pass the character as an integer cast to void*
     result = pthread_create(&threadHandle, 
                            &attr, 
-                           (void*(*)(void*))function, 
-                           NULL);
+                           (void*(*)(void*))function,
+                           (void*)(intptr_t)arg);
     
     pthread_attr_destroy(&attr);
     

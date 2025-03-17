@@ -33,15 +33,15 @@ Sys_CreateThread
 Create a new thread of execution with no arguments
 ===============
 */
-void Sys_CreateThread(void (*function)(void));
+void Sys_CreateThread(void (*function)(const char *), const char *arg);
 
-void RS_CreateRecord(void);
+void RS_CreateRecord(const char *s);
 
 void RS_GameSendServerCommand( int clientNum, const char *text );
 
 qboolean RS_IsCommand(const char *s);
 
-void RS_CommandGateway(void);
+void RS_CommandGateway(const char *s);
 
 qboolean RS_IsClientTimerStop( const char *s);
 
