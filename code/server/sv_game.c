@@ -350,6 +350,38 @@ static qboolean SV_GetValue( char* value, int valueSize, const char* key )
 	return qfalse;
 }
 
+/*
+=================
+startsWith
+
+Returns qtrue if the string begins with the given prefix
+=================
+*/
+qboolean s_startsWith(const char *string, const char *prefix) {
+    if (!string || !prefix) {
+        return qfalse;
+    }
+    
+    size_t prefixLen = strlen(prefix);
+    size_t stringLen = strlen(string);
+    
+    if (prefixLen > stringLen) {
+        return qfalse;
+    }
+    
+    return (strncmp(string, prefix, prefixLen) == 0) ? qtrue : qfalse;
+}
+
+static void StoreRecordIfNecessary(const char *s) {
+  if (!s_startsWith(s, "ClientTimerStop: ")) return;
+  
+  SV_GameSendServerCommand( -1, "print \"^5You have finished\"\n" );
+  // parse the string for client num,
+  // check client is logged in
+  if (Cvar_VariableIntegerValue("sv_cheats") != 0) return;
+  // blah blah spawn a new thread or send a message somewhere blah blah
+}
+
 
 /*
 ====================
@@ -361,7 +393,8 @@ The module is making a system call
 static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 	switch( args[0] ) {
 	case G_PRINT:
-		Com_Printf("Hello world");
+		StoreRecordIfNecessary((const char *)VMA(1));
+		// Com_Printf( "server ^5> ^7");
 		Com_Printf( "%s", (const char*)VMA(1) );
 		return 0;
 	case G_ERROR:
