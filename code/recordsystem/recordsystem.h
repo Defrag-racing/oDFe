@@ -37,4 +37,12 @@ void Sys_CreateThread(void (*function)(void));
 
 void RS_CreateRecord(void);
 
+void RS_GameSendServerCommand( int clientNum, const char *text );
+
+qboolean RS_IsCommand(const char *s);
+
+void RS_CommandGateway(void);
+
+qboolean RS_IsClientTimerStop( const char *s);
+
 #endif // __RECORDSYSTEM_H__

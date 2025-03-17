@@ -1,26 +1,12 @@
 #include "recordsystem.h"
-#include "../server/server.h"
 
-/*
-===============
-SV_GameSendServerCommand
-
-Sends a command string to a client
-===============
-*/
-static void RS_GameSendServerCommand( int clientNum, const char *text ) {
-	if ( clientNum == -1 ) {
-		SV_SendServerCommand( NULL, "%s", text );
-	} else {
-		if ( clientNum < 0 || clientNum >= sv.maxclients ) {
-			return;
-		}
-		SV_SendServerCommand( svs.clients + clientNum, "%s", text );
-	}
+qboolean RS_IsClientTimerStop( const char *s) {
+	// extra logic here to make sure it's a true timer stop
+	// potential: compare playerstates between this and last frame:  
+	// check for timer state bit and that it's non-zero
+	return startsWith(s, "ClientTimerStop: ") ? qtrue: qfalse;
 }
 
 void RS_CreateRecord(void){
-  Sys_Sleep(5000);
-  RS_GameSendServerCommand( -1, "print \"^5You have finished\"\n" );
+  RS_GameSendServerCommand( -1, "print \"^5You have finished\n\"" );
 }
-
