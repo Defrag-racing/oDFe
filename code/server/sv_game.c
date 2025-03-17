@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // sv_game.c -- interface to the game dll
 
 #include "server.h"
+#include <pthread.h>
 
 #include "../botlib/botlib.h"
 
@@ -351,6 +352,36 @@ static qboolean SV_GetValue( char* value, int valueSize, const char* key )
 }
 
 /*
+===============
+Sys_CreateThread
+
+Create a new thread of execution
+===============
+*/
+void Sys_CreateThread(void (*function)(void)) {
+    // POSIX implementation (Linux, macOS, etc.)
+    pthread_t threadHandle;
+    pthread_attr_t attr;
+    int result;
+    
+    pthread_attr_init(&attr);
+    // Create the thread in detached state so its resources are automatically
+    // freed when it exits
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    
+    result = pthread_create(&threadHandle, 
+                           &attr, 
+                           (void*(*)(void*))function, 
+                           NULL);
+    
+    pthread_attr_destroy(&attr);
+    
+    if (result != 0) {
+        Com_Error(ERR_FATAL, "Sys_CreateThread: pthread_create failed with error %d", result);
+    }
+}
+
+/*
 =================
 startsWith
 
@@ -372,10 +403,16 @@ qboolean s_startsWith(const char *string, const char *prefix) {
     return (strncmp(string, prefix, prefixLen) == 0) ? qtrue : qfalse;
 }
 
-static void StoreRecordIfNecessary(const char *s) {
-  if (!s_startsWith(s, "ClientTimerStop: ")) return;
-  
+static void RS_TimerStop(){
+  Sys_Sleep(5000);
   SV_GameSendServerCommand( -1, "print \"^5You have finished\"\n" );
+}
+
+static void CheckForRS(const char *s) {
+  if (!s_startsWith(s, "ClientBegin: ")) return;
+  
+  Sys_CreateThread((void (*)(void))RS_TimerStop);
+//   SV_GameSendServerCommand( -1, "print \"^5You have finished\"\n" );
   // parse the string for client num,
   // check client is logged in
   if (Cvar_VariableIntegerValue("sv_cheats") != 0) return;
@@ -393,7 +430,7 @@ The module is making a system call
 static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 	switch( args[0] ) {
 	case G_PRINT:
-		StoreRecordIfNecessary((const char *)VMA(1));
+		CheckForRS((const char *)VMA(1));
 		// Com_Printf( "server ^5> ^7");
 		Com_Printf( "%s", (const char*)VMA(1) );
 		return 0;
