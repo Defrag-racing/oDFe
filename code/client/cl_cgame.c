@@ -450,13 +450,8 @@ static void CL_ForceFixedDlights( void ) {
 	}
 }
 
+
 /*
-=================
-startsWith
-
-Returns qtrue if the string begins with the given prefix
-=================
-
 ====================
 CL_CgameSystemCalls
 
@@ -466,7 +461,6 @@ The cgame module is making a system call
 static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 	switch( args[0] ) {
 	case CG_PRINT:
-		// StoreRecordIfNecessary((const char *)VMA(1));
 		Com_Printf( "%s", (const char*)VMA(1) );
 		return 0;
 	case CG_ERROR:

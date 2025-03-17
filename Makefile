@@ -214,6 +214,7 @@ RVDIR=$(MOUNT_DIR)/renderervk
 SDLDIR=$(MOUNT_DIR)/sdl
 SDLHDIR=$(MOUNT_DIR)/libsdl/include/SDL2
 
+RSDIR=$(MOUNT_DIR)/recordsystem
 CMDIR=$(MOUNT_DIR)/qcommon
 UDIR=$(MOUNT_DIR)/unix
 W32DIR=$(MOUNT_DIR)/win32
@@ -1068,6 +1069,8 @@ Q3OBJ = \
   \
   $(B)/client/cmd.o \
   $(B)/client/common.o \
+  $(B)/client/rs_main.o \
+  $(B)/client/rs_record.o \
   $(B)/client/cvar.o \
   $(B)/client/files.o \
   $(B)/client/history.o \
@@ -1305,6 +1308,8 @@ Q3DOBJ = \
   $(B)/ded/cm_test.o \
   $(B)/ded/cm_trace.o \
   $(B)/ded/cmd.o \
+  $(B)/ded/rs_main.o \
+  $(B)/ded/rs_record.o \
   $(B)/ded/common.o \
   $(B)/ded/cvar.o \
   $(B)/ded/files.o \
@@ -1399,6 +1404,9 @@ $(B)/client/%.o: $(CDIR)/%.c
 $(B)/client/%.o: $(SDIR)/%.c
 	$(DO_CC)
 
+$(B)/client/%.o: $(RSDIR)/%.c
+	$(DO_CC)
+
 $(B)/client/%.o: $(CMDIR)/%.c
 	$(DO_CC)
 
@@ -1463,6 +1471,9 @@ $(B)/ded/%.o: $(ADIR)/%.s
 	$(DO_AS)
 
 $(B)/ded/%.o: $(SDIR)/%.c
+	$(DO_DED_CC)
+
+$(B)/ded/%.o: $(RSDIR)/%.c
 	$(DO_DED_CC)
 
 $(B)/ded/%.o: $(CMDIR)/%.c
