@@ -1069,10 +1069,6 @@ Q3OBJ = \
   \
   $(B)/client/cmd.o \
   $(B)/client/common.o \
-  $(B)/client/rs_main.o \
-  $(B)/client/rs_records.o \
-  $(B)/client/rs_common.o \
-  $(B)/client/rs_commands.o \
   $(B)/client/cvar.o \
   $(B)/client/files.o \
   $(B)/client/history.o \
@@ -1393,7 +1389,7 @@ endif
 
 $(B)/$(TARGET_SERVER): $(Q3DOBJ)
 	$(echo_cmd) "LD $@"
-	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS)
+	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS) -lcurl
 
 #############################################################################
 ## CLIENT/SERVER RULES

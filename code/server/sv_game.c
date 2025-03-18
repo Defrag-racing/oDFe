@@ -362,7 +362,9 @@ The module is making a system call
 static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 	switch( args[0] ) {
 	case G_PRINT:
+		#ifdef DEDICATED
 		RS_Gateway((const char *)VMA(1));
+		#endif
 		Com_Printf( "%s", (const char*)VMA(1) );
 		return 0;
 	case G_ERROR:

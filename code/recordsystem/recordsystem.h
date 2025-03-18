@@ -8,6 +8,7 @@
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
 
+
 /*
 ===============
 startsWith
@@ -44,5 +45,30 @@ qboolean RS_IsCommand(const char *s);
 void RS_CommandGateway(const char *s);
 
 qboolean RS_IsClientTimerStop( const char *s);
+
+typedef struct {
+    char *memory;
+    size_t size;
+} MemoryStruct;
+
+/*
+===============
+WriteMemoryCallback
+
+Callback function for storing HTTP response data
+===============
+*/
+// size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp);
+
+/*
+===============
+RS_HttpGet
+
+Performs an HTTP GET request to the specified URL
+Returns the response as a null-terminated string that must be freed by the caller
+Returns NULL if the request failed
+===============
+*/
+char* RS_HttpGet(const char *url);
 
 #endif // __RECORDSYSTEM_H__

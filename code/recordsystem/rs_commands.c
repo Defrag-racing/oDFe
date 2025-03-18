@@ -9,7 +9,17 @@ Returns qtrue if the string ends with the given suffix
 */
 
 static void RS_Top(const char *map) {
-    return RS_GameSendServerCommand( -1, "print \"^5Top\n\"" );
+    char *response;
+    
+    // Make the HTTP request
+    response = RS_HttpGet("http://localhost:8000/api/records/st1");
+    
+    if (response) {
+        return RS_GameSendServerCommand( -1, va("print %s", response));
+        free(response);
+    } else {
+        return RS_GameSendServerCommand( -1, "print \"Failed to get response\n\"" );
+    }
 }
 
 static void RS_Recent(const char *map) {
