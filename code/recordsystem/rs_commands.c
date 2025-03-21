@@ -1,29 +1,33 @@
 #include "recordsystem.h"
+#include "../server/server.h"
 
-/*
-===============
-endsWith
 
-Returns qtrue if the string ends with the given suffix
-===============
-*/
-
-static void RS_Top(const char *map) {
+static void RS_Top(const char *str) {
     char *response;
     
     // Make the HTTP request
-    response = RS_HttpGet("http://localhost:8000/api/records/st1");
+    response = RS_HttpGet(va("http://localhost:8000/api/commands/top?saystr=%s&curr_map=%s", RS_UrlEncode(str), sv_mapname->string));
     
     if (response) {
-        return RS_GameSendServerCommand( -1, va("print %s", response));
+        return RS_GameSendServerCommand( -1, va("print \"%s\"", response));
         free(response);
     } else {
         return RS_GameSendServerCommand( -1, "print \"Failed to get response\n\"" );
     }
 }
 
-static void RS_Recent(const char *map) {
-    return RS_GameSendServerCommand( -1, "print \"^5Recent maps: st1\n\"" );
+static void RS_Recent(const char *str) {
+    char *response;
+    
+    // Make the HTTP request
+    response = RS_HttpGet(va("http://localhost:8000/api/commands/recent?saystr=%s", RS_UrlEncode(str)));
+    
+    if (response) {
+        return RS_GameSendServerCommand( -1, va("print \"%s\"", response));
+        free(response);
+    } else {
+        return RS_GameSendServerCommand( -1, "print \"Failed to get response\n\"" );
+    }
 }
 
 static void RS_Login(const char *map) {
@@ -46,21 +50,6 @@ Module modules[] = {
     {": !logout\n", RS_Logout}
 };
 
-static qboolean endsWith(const char *string, const char *suffix) {
-    if (!string || !suffix) {
-        return qfalse;
-    }
-    
-    size_t stringLen = strlen(string);
-    size_t suffixLen = strlen(suffix);
-    
-    if (suffixLen > stringLen) {
-        return qfalse;
-    }
-    
-    return (strcmp(string + stringLen - suffixLen, suffix) == 0) ? qtrue : qfalse;
-}
-
 qboolean RS_IsCommand(const char *string) {
     if (!string) {
         return qfalse;
@@ -80,6 +69,7 @@ qboolean RS_IsCommand(const char *string) {
     
     return qfalse;
 }
+
 
 void RS_CommandGateway(const char *string) {
     // Check each command pattern

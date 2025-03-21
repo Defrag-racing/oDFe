@@ -9,14 +9,9 @@
 #include "../qcommon/qcommon.h"
 
 
-/*
-===============
-startsWith
-
-Returns qtrue if the string begins with the given prefix
-===============
-*/
 qboolean startsWith(const char *string, const char *prefix);
+
+qboolean endsWith(const char *string, const char *suffix);
 
 /*
 ===============
@@ -70,5 +65,15 @@ Returns NULL if the request failed
 ===============
 */
 char* RS_HttpGet(const char *url);
+
+/*
+===============
+RS_UrlEncode
+
+Encodes a string for use in a URL
+The returned string must be freed by the caller
+===============
+*/
+char* RS_UrlEncode(const char *str);
 
 #endif // __RECORDSYSTEM_H__

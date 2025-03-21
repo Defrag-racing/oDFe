@@ -18,6 +18,21 @@ qboolean startsWith(const char *string, const char *prefix) {
     return (strncmp(string, prefix, prefixLen) == 0) ? qtrue : qfalse;
 }
 
+qboolean endsWith(const char *string, const char *suffix) {
+    if (!string || !suffix) {
+        return qfalse;
+    }
+    
+    size_t stringLen = strlen(string);
+    size_t suffixLen = strlen(suffix);
+    
+    if (suffixLen > stringLen) {
+        return qfalse;
+    }
+    
+    return (strcmp(string + stringLen - suffixLen, suffix) == 0) ? qtrue : qfalse;
+}
+
 /*
 ===============
 Sys_CreateThread
@@ -135,4 +150,54 @@ char* RS_HttpGet(const char *url) {
     curl_global_cleanup();
     
     return response;
+}
+
+/*
+===============
+RS_UrlEncode
+
+Encodes a string for use in a URL
+The returned string must be freed by the caller
+===============
+*/
+char* RS_UrlEncode(const char *str) {
+    if (!str) {
+        return NULL;
+    }
+    
+    // Characters that don't need encoding
+    const char *safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
+    
+    // Count the number of characters that need encoding
+    int len = strlen(str);
+    int encoded_len = 0;
+    int i;
+    
+    for (i = 0; i < len; i++) {
+        if (strchr(safe, str[i])) {
+            encoded_len++;
+        } else {
+            encoded_len += 3; // %XX format for each unsafe character
+        }
+    }
+    
+    // Allocate memory for the encoded string
+    char *encoded = (char *)malloc(encoded_len + 1);
+    if (!encoded) {
+        return NULL;
+    }
+    
+    // Encode the string
+    char *p = encoded;
+    for (i = 0; i < len; i++) {
+        if (strchr(safe, str[i])) {
+            *p++ = str[i];
+        } else {
+            sprintf(p, "%%%02X", (unsigned char)str[i]);
+            p += 3;
+        }
+    }
+    *p = '\0';
+    
+    return encoded;
 }
