@@ -39,12 +39,12 @@ static void RS_Logout(const char *map) {
 }
 
 typedef struct {
-    const char *suffix;
+    const char *pattern;
     void (*handler)(const char *);
 } Module;
 
 Module modules[] = {
-    {": !top\n", RS_Top},
+    {": !top", RS_Top},
     {": !recent\n", RS_Recent},
     {": !login\n", RS_Login},
     {": !logout\n", RS_Logout}
@@ -62,7 +62,7 @@ qboolean RS_IsCommand(const char *string) {
     
     int numModules= sizeof(modules) / sizeof(modules[0]);
     for (int i = 0; i < numModules; i++) {
-        if (endsWith(string, modules[i].suffix)) {
+        if (endsWith(string, modules[i].pattern)) {
             return qtrue;
         }
     }
@@ -75,7 +75,7 @@ void RS_CommandGateway(const char *string) {
     // Check each command pattern
     int numModules= sizeof(modules) / sizeof(modules[0]);
     for (int i = 0; i < numModules; i++) {
-        if (endsWith(string, modules[i].suffix)) {
+        if (endsWith(string, modules[i].pattern)) {
             // Call the appropriate handler function
             modules[i].handler(string);
             return;
