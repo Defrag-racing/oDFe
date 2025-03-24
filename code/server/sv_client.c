@@ -23,6 +23,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "server.h"
 
+#ifdef DEDICATED
+#include "../recordsystem/recordsystem.h"
+#endif
+
 static void SV_CloseDownload( client_t *cl );
 
 //
@@ -2077,6 +2081,11 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 
 	Com_DPrintf( "clientCommand: %s : %i : %s\n", cl->name, seq, s );
 
+#ifdef DEDICATED
+	int clientNum;
+	clientNum = cl - svs.clients;
+	RS_CommandGateway(clientNum, cl->name, s);
+#endif
 	// drop the connection if we have somehow lost commands
 	if ( seq - cl->lastClientCommand > 1 ) {
 		Com_Printf( "Client %s lost %i clientCommands\n", cl->name, seq - cl->lastClientCommand - 1 );
