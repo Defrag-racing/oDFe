@@ -55,7 +55,7 @@ RS_CommandGateway
 Routes commands to their appropriate handlers
 ===============
 */
-void RS_CommandGateway(int clientNum, const char *plyrName, const char *s);
+qboolean RS_CommandGateway(int clientNum, const char *plyrName, const char *s);
 
 /*
 ===============
@@ -107,5 +107,8 @@ The returned string must be freed by the caller
 ===============
 */
 char* RS_UrlEncode(const char *str);
+
+
+void RS_PrintAPIResponse(const char *jsonString);
 
 #endif // __RECORDSYSTEM_H__
