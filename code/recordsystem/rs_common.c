@@ -1,6 +1,8 @@
 #include "recordsystem.h"
 #include "../server/server.h"
 #include <curl/curl.h>
+#include "cJSON.h"
+
 
 qboolean startsWith(const char *string, const char *prefix) {
     if (!string || !prefix) {
@@ -299,67 +301,41 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
     return response;
 };
 
-/*
-===============
-RS_PrintAPIResponse
 
-Parses a JSON API response and sends the message to the target client
-Expected format: "{"targetClient":-1,"message":"Map 'df_castle' not found"}"
-===============
-*/
-/*
-===============
-RS_PrintAPIResponse
-
-Parses a JSON API response and sends the message to the target client
-Expected format: {"targetClient":-1,"message":"Map 'df_castle' not found"}
-===============
-*/
 void RS_PrintAPIResponse(const char *jsonString) {
-    char message[1024] = {0};
+    cJSON *json;
+    cJSON *targetClientObj;
+    cJSON *messageObj;
     int targetClient = -1;
-    const char *startMsg, *endMsg;
-    const char *startClient;
+    const char *message = NULL;
     
-    // Sanity check
-    if (!jsonString || !*jsonString) {
-        Com_Printf("RS: Empty API response\n");
+    // Parse the JSON
+    json = cJSON_Parse(jsonString);
+    if (!json) {
+        Com_Printf("RS: Failed to parse JSON: %s\n", cJSON_GetErrorPtr());
         return;
     }
     
-    // Parse targetClient field - look for "targetClient":X
-    startClient = strstr(jsonString, "\"targetClient\":");
-    if (startClient) {
-        startClient += 15; // Length of "\"targetClient\":"
-        
-        // Skip whitespace
-        while (*startClient && (*startClient == ' ' || *startClient == '\t'))
-            startClient++;
-        
-        // Read the client number
-        targetClient = atoi(startClient);
+    // Extract targetClient field
+    targetClientObj = cJSON_GetObjectItem(json, "targetClient");
+    if (targetClientObj && cJSON_IsNumber(targetClientObj)) {
+        targetClient = targetClientObj->valueint;
     }
     
-    // Parse message field - look for "message":"X"
-    startMsg = strstr(jsonString, "\"message\":\"");
-    if (startMsg) {
-        startMsg += 11; // Length of "\"message\":\""
-        
-        // Find the closing quote
-        endMsg = strchr(startMsg, '\"');
-        if (endMsg) {
-            // Extract the message text
-            int msgLen = endMsg - startMsg;
-            if (msgLen > 0 && msgLen < sizeof(message) - 1) {
-                Q_strncpyz(message, startMsg, msgLen + 1);
-            }
-        }
+    // Extract message field
+    messageObj = cJSON_GetObjectItem(json, "message");
+    if (messageObj && cJSON_IsString(messageObj)) {
+        message = messageObj->valuestring;
     }
     
-    // If we successfully parsed a message, send it to the target client
-    if (message[0] != '\0') {
-        RS_GameSendServerCommand(targetClient, va("print \"%s\n\"", message));
+    // Send the message to the target client
+    if (message && *message) {
+        // Send the message directly, preserving any newlines
+        RS_GameSendServerCommand(targetClient, va("print \"^5(^7defrag^5.^7racing^5)^7 %s\"", message));
     } else {
-        Com_Printf("RS: Failed to parse message from API response: %s\n", jsonString);
+        Com_Printf("RS: Missing message in API response\n");
     }
+    
+    // Clean up
+    cJSON_Delete(json);
 }

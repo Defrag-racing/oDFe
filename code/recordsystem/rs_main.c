@@ -5,6 +5,6 @@ void RS_Gateway(const char *s) {
         if (Cvar_VariableIntegerValue("sv_cheats") != 0) {
             return;
         }
-        Sys_CreateThread(RS_CreateRecord, s);
+        Sys_CreateThread(RS_SendTime, s);
     }
 }

@@ -1,5 +1,6 @@
 #include "recordsystem.h"
 #include "../server/server.h"
+#include "cJSON.h"
 
 static void RS_Top(int clientNum, const char *plyrName, const char *str) {
     char *response;
@@ -53,7 +54,8 @@ static void RS_Recent(int clientNum, const char *plyrName, const char *str) {
     }
     
     // Build the URL
-    Com_sprintf(url, sizeof(url), "http://localhost:8000/api/commands/recent?saystr=%s", encoded_str);
+
+    Com_sprintf(url, sizeof(url), "http://localhost:8000/api/commands/recent?client_num=%d&cmd_string=%s", clientNum, encoded_str);
     free(encoded_str); // Free encoded string when done
     
     // Make the HTTP request
@@ -69,15 +71,36 @@ static void RS_Recent(int clientNum, const char *plyrName, const char *str) {
 
 static void RS_Login(int clientNum, const char *plyrName, const char *str) {
     char *response;
-    char payload[512];
+    char *jsonString;
+    cJSON *json;
     
-    // Create JSON payload with the entire command string
-    Com_sprintf(payload, sizeof(payload), 
-                "{\"saystr\":\"%s\"}", str);
+    // Create a JSON object
+    json = cJSON_CreateObject();
+    if (!json) {
+        RS_GameSendServerCommand(clientNum, "print \"^1Error creating JSON object\n\"");
+        return;
+    }
+    
+    // Add client number and command string to the JSON object
+    cJSON_AddNumberToObject(json, "clientNum", clientNum);
+    cJSON_AddStringToObject(json, "cmdString", str);
+    cJSON_AddStringToObject(json, "plyrName", plyrName);
+    
+    // Convert JSON object to string
+    jsonString = cJSON_Print(json);
+    cJSON_Delete(json); // Free the JSON object
+    
+    if (!jsonString) {
+        RS_GameSendServerCommand(clientNum, "print \"^1Error serializing JSON\n\"");
+        return;
+    }
     
     // Make the HTTP request
     response = RS_HttpPost("http://localhost:8000/api/commands/login", 
-                           "application/json", payload);
+                          "application/json", jsonString);
+    
+    // Free the JSON string
+    free(jsonString);
     
     if (response) {
         RS_PrintAPIResponse(response);
@@ -89,15 +112,36 @@ static void RS_Login(int clientNum, const char *plyrName, const char *str) {
 
 static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
     char *response;
-    char payload[512];
+    char *jsonString;
+    cJSON *json;
     
-    // Create JSON payload with the entire command string
-    Com_sprintf(payload, sizeof(payload), 
-                "{\"saystr\":\"%s\"}", str);
+    // Create a JSON object
+    json = cJSON_CreateObject();
+    if (!json) {
+        RS_GameSendServerCommand(clientNum, "print \"^1Error creating JSON object\n\"");
+        return;
+    }
+    
+    // Add client number and command string to the JSON object
+    cJSON_AddNumberToObject(json, "clientNum", clientNum);
+    cJSON_AddStringToObject(json, "cmdString", str);
+    cJSON_AddStringToObject(json, "plyrName", plyrName);
+    
+    // Convert JSON object to string
+    jsonString = cJSON_Print(json);
+    cJSON_Delete(json); // Free the JSON object
+    
+    if (!jsonString) {
+        RS_GameSendServerCommand(clientNum, "print \"^1Error serializing JSON\n\"");
+        return;
+    }
     
     // Make the HTTP request
     response = RS_HttpPost("http://localhost:8000/api/commands/logout", 
-                           "application/json", payload);
+                          "application/json", jsonString);
+    
+    // Free the JSON string
+    free(jsonString);
     
     if (response) {
         RS_PrintAPIResponse(response);
@@ -106,6 +150,7 @@ static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
     }
 }
+
 typedef struct {
     const char *pattern;
     void (*handler)(int clientNum, const char *plyrName, const char *str);
@@ -122,7 +167,7 @@ qboolean RS_CommandGateway(int clientNum, const char *plyrName, const char *s) {
     // Check each command pattern
     int numModules = sizeof(modules) / sizeof(modules[0]);
     for (int i = 0; i < numModules; i++) {
-        if (startsWith(s, modules[i].pattern)) {
+        if (startsWith(s, va("%s ",modules[i].pattern)) || Q_stricmp(s, modules[i].pattern) == 0) {
             // Call the appropriate handler function
             modules[i].handler(clientNum, plyrName, s);
             return qtrue;

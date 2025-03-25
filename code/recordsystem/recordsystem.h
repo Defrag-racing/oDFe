@@ -30,14 +30,8 @@ Create a new thread of execution with a string argument
 */
 void Sys_CreateThread(void (*function)(const char *), const char *arg);
 
-/*
-===============
-RS_CreateRecord
 
-Creates a record entry from a ClientTimerStop event
-===============
-*/
-void RS_CreateRecord(const char *s);
+void RS_SendTime(const char *cmdString);
 
 /*
 ===============
