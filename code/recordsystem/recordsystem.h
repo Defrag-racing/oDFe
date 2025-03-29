@@ -7,6 +7,7 @@
 #include <string.h>
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
+#include "../server/server.h"
 
 // String utility functions
 qboolean startsWith(const char *string, const char *prefix);
@@ -104,5 +105,71 @@ char* RS_UrlEncode(const char *str);
 
 
 void RS_PrintAPIResponse(const char *jsonString);
+
+void RS_StartRecord( int clientNum, const char *plyrName, const char *str );
+
+
+/*
+====================
+SV_StopRecording
+
+stop recording a demo
+====================
+*/
+void RS_StopRecord( int clientNum, const char *plyrName, const char *str );
+
+/*
+====================
+SV_WriteGamestate
+====================
+*/
+void RS_WriteGamestate( client_t *client);
+
+/*
+====================
+RS_WriteSnapshotToDemo
+====================
+*/
+void RS_WriteSnapshot(client_t *client);
+void RS_WriteDemoMessage(client_t *client, msg_t *msg);
+
+// Message types for demo recording
+typedef enum {
+    DEMO_MSG_GAMESTATE,
+    DEMO_MSG_SNAPSHOT,
+    DEMO_MSG_END_RECORDING
+} demoMsgType_t;
+
+// Structure for a demo message in the queue
+typedef struct {
+    demoMsgType_t type;       // Type of message
+    int clientNum;            // Client index
+    int sequence;             // Sequence number
+    int serverTime;           // Server time for this message
+    byte *data;               // Message data
+    int dataSize;             // Size of the message data
+} demoQueuedMsg_t;
+
+// Initialize the threaded demo writer system
+qboolean RS_InitThreadedDemos(void);
+
+// Shutdown the threaded demo writer system
+void RS_ShutdownThreadedDemos(void);
+
+// Start recording a demo for a client (threaded version)
+void RS_StartThreadedRecord(int clientNum, const char *plyrName, const char *demoName);
+
+// Stop recording a demo for a client (threaded version)
+void RS_StopThreadedRecord(int clientNum, const char *plyrName, const char *str);
+
+// Queue a gamestate message for writing
+void RS_QueueGamestate(client_t *client);
+
+// Queue a snapshot message for writing
+void RS_QueueSnapshot(client_t *client);
+
+// Get number of pending messages in queue
+int RS_GetQueuedMessageCount(void);
+
 
 #endif // __RECORDSYSTEM_H__

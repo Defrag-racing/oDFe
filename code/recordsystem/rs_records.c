@@ -1,7 +1,5 @@
 #include "recordsystem.h"
-#include "recordsystem.h"
 #include "cJSON.h"
-#include "../server/server.h"
 
 /*
 ===============

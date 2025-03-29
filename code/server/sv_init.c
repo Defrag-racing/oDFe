@@ -20,7 +20,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
+#ifdef ENABLE_RS
+#include "../recordsystem/recordsystem.h"
+#else
 #include "server.h"
+#endif
 
 cvar_t	*sv_noReferencedPaks;
 
@@ -832,6 +836,9 @@ void SV_Init( void )
 	SV_TrackCvarChanges();
 
 	SV_InitChallenger();
+	#ifdef ENABLE_RS
+	RS_InitThreadedDemos();
+	#endif
 }
 
 
@@ -882,7 +889,9 @@ void SV_Shutdown( const char *finalmsg ) {
 	if ( !com_sv_running || !com_sv_running->integer ) {
 		return;
 	}
-
+	#ifdef ENABLE_RS
+	RS_ShutdownThreadedDemos();
+	#endif
 	Com_Printf( "----- Server Shutdown (%s) -----\n", finalmsg );
 
 #ifdef USE_IPV6

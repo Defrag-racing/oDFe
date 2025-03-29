@@ -90,6 +90,7 @@ typedef struct {
 	int				time;
 
 	byte			baselineUsed[ MAX_GENTITIES ];
+
 } server_t;
 
 typedef struct {
@@ -229,6 +230,20 @@ typedef struct client_s {
 	char			tld[3]; // "XX\0"
 	const char		*country;
 
+#ifdef DEDICATED
+	qboolean		isLogged;
+	const char		*uuid;
+	qboolean		isRecording;
+	fileHandle_t	demoFile;
+
+	int		eventMask;
+	int		demoCommandSequence;
+	int		demoDeltaNum;
+	int		demoMessageSequence;
+
+	msg_t		gamestateMsg;
+	qboolean demoWaiting;
+#endif
 } client_t;
 
 //=============================================================================
@@ -389,7 +404,7 @@ client_t *SV_GetPlayerByHandle( void );
 void SV_AddServerCommand( client_t *client, const char *cmd );
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg );
 void SV_WriteFrameToClient( client_t *client, msg_t *msg );
-void SV_SendMessageToClient( msg_t *msg, client_t *client );
+void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot);
 void SV_SendClientMessages( void );
 void SV_SendClientSnapshot( client_t *client );
 

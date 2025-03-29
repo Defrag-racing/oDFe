@@ -708,7 +708,7 @@ endef
 
 define DO_DED_CC
 $(echo_cmd) "DED_CC $<"
-$(Q)$(CC) $(CFLAGS) -DDEDICATED -o $@ -c $<
+$(Q)$(CC) $(CFLAGS) -DDEDICATED -DENABLE_RS -o $@ -c $<
 endef
 
 define DO_WINDRES
@@ -1311,6 +1311,7 @@ Q3DOBJ = \
   $(B)/ded/rs_records.o \
   $(B)/ded/rs_common.o \
   $(B)/ded/rs_commands.o \
+  $(B)/ded/rs_serverdemos.o \
   $(B)/ded/common.o \
   $(B)/ded/cvar.o \
   $(B)/ded/files.o \

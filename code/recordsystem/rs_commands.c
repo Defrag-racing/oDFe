@@ -1,5 +1,4 @@
 #include "recordsystem.h"
-#include "../server/server.h"
 #include "cJSON.h"
 
 static void RS_Top(int clientNum, const char *plyrName, const char *str) {
@@ -160,7 +159,9 @@ static Module modules[] = {
     {"top", RS_Top},
     {"recent", RS_Recent},
     {"login", RS_Login},
-    {"logout", RS_Logout}
+    {"logout", RS_Logout},
+    {"rs_record", RS_StartThreadedRecord},
+    {"rs_stoprecord", RS_StopThreadedRecord}
 };
 
 qboolean RS_CommandGateway(int clientNum, const char *plyrName, const char *s) {

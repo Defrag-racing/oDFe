@@ -21,10 +21,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 // sv_game.c -- interface to the game dll
 
-#include "server.h"
-#include <pthread.h>
+#ifdef DEDICATED
 #include "../recordsystem/recordsystem.h"
+#else
+#include "server.h"
+#endif
+#include <pthread.h>
 #include "../botlib/botlib.h"
+
 
 botlib_export_t	*botlib_export;
 
@@ -362,7 +366,7 @@ The module is making a system call
 static intptr_t SV_GameSystemCalls( intptr_t *args ) {
 	switch( args[0] ) {
 	case G_PRINT:
-		#ifdef DEDICATED
+		#ifdef ENABLE_RS
 		RS_Gateway((const char *)VMA(1));
 		#endif
 		Com_Printf( "%s", (const char*)VMA(1) );

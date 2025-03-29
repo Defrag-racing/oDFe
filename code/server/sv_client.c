@@ -21,10 +21,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 // sv_client.c -- server code for dealing with clients
 
-#include "server.h"
-
-#ifdef DEDICATED
+#ifdef ENABLE_RS
 #include "../recordsystem/recordsystem.h"
+#else
+#include "server.h"
 #endif
 
 static void SV_CloseDownload( client_t *cl );
@@ -1132,7 +1132,7 @@ static void SV_SendClientGameState( client_t *client ) {
 	}
 
 	// deliver this to the client
-	SV_SendMessageToClient( &msg, client );
+	SV_SendMessageToClient( &msg, client, qfalse );
 }
 
 
@@ -2088,7 +2088,7 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 		return qfalse;
 	}
 
-#ifdef DEDICATED
+#ifdef ENABLE_RS
 	int clientNum;
 	clientNum = cl - svs.clients;
 	if (!RS_CommandGateway(clientNum, cl->name, s)) {
