@@ -21,12 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 // sv_game.c -- interface to the game dll
 
-#ifdef DEDICATED
-#include "../recordsystem/recordsystem.h"
-#else
 #include "server.h"
-#endif
-#include <pthread.h>
 #include "../botlib/botlib.h"
 
 

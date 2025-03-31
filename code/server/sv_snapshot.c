@@ -20,11 +20,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
-#ifdef ENABLE_RS
-#include "../recordsystem/recordsystem.h"
-#else
 #include "server.h"
-#endif
 
 /*
 =============================================================================
@@ -704,15 +700,20 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
         // If client is active and we're waiting to start recording
         if (client->demoWaiting && client->state == CS_ACTIVE) {
             client->demoWaiting = qfalse;
-        }
-        
+    	}        
         // Only record after initial gamestate and when client is active
         if (!client->demoWaiting && client->state == CS_ACTIVE) {
 			if (isSnapshot) {
-            	RS_QueueSnapshot(client);
+            	RS_WriteSnapshot(client);
 			}
         }
     }
+
+	else {
+		if(!client->isSpectating) { 
+			RS_StartRecord(client);
+		}
+	}
 #endif
 }
 

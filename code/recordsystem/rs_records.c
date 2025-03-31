@@ -1,5 +1,159 @@
-#include "recordsystem.h"
+#include "../server/server.h"
 #include "cJSON.h"
+
+/*
+====================
+ParseTimerStop
+Parses a timer stop log message into a structured format
+====================
+*/
+typedef struct {
+    int clientNum;          // Entity/client number
+    int time;               // Timer time (in milliseconds)
+    char mapname[64];       // Map name
+    char netname[36];       // Player's name
+    int gametype;           // Game type
+    int promode;            // Promode enabled
+    int submode;            // Sub-mode
+    int interferenceOff;    // Interference off flag
+    int obEnabled;          // Out of bounds enabled
+    int version;            // Version number
+    char date[16];          // Date string (YYYY-MM-DD)
+} timeInfo_t;
+
+static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
+    timeInfo_t* info;
+    char buffer[1024];
+    const char *token, *str;
+    
+    // Check that the line starts with "ClientTimerStop:"
+    if (!logLine || strncmp(logLine, "ClientTimerStop:", 16) != 0) {
+        return NULL;
+    }
+    
+    // Allocate memory for the structure
+    info = (timeInfo_t*)Z_Malloc(sizeof(timeInfo_t));
+    if (!info) {
+        return NULL;
+    }
+    
+    // Initialize the structure
+    memset(info, 0, sizeof(timeInfo_t));
+    
+    // Skip past "ClientTimerStop: "
+    logLine += 16;
+    
+    // Make a copy of the line to tokenize
+    Q_strncpyz(buffer, logLine, sizeof(buffer));
+    str = buffer;
+    
+    // Parse client number
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->clientNum = atoi(token);
+    
+    // Parse time
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->time = atoi(token);
+    
+    // Parse mapname (quoted)
+    token = COM_ParseExt(&str, qfalse);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    // Remove quotes
+    if (token[0] == '"') {
+        Q_strncpyz(info->mapname, token + 1, sizeof(info->mapname) - 1);
+        if (info->mapname[strlen(info->mapname) - 1] == '"') {
+            info->mapname[strlen(info->mapname) - 1] = '\0';
+        }
+    } else {
+        Q_strncpyz(info->mapname, token, sizeof(info->mapname));
+    }
+    
+    // Parse netname (quoted)
+    token = COM_ParseExt(&str, qfalse);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    // Remove quotes
+    if (token[0] == '"') {
+        Q_strncpyz(info->netname, token + 1, sizeof(info->netname) - 1);
+        if (info->netname[strlen(info->netname) - 1] == '"') {
+            info->netname[strlen(info->netname) - 1] = '\0';
+        }
+    } else {
+        Q_strncpyz(info->netname, token, sizeof(info->netname));
+    }
+    
+    // Parse gametype
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->gametype = atoi(token);
+    
+    // Parse promode
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->promode = atoi(token);
+    
+    // Parse submode
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->submode = atoi(token);
+    
+    // Parse interference flag
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->interferenceOff = atoi(token);
+    
+    // Parse OB flag
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->obEnabled = atoi(token);
+    
+    // Parse version
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    info->version = atoi(token);
+    
+    // Parse date
+    token = COM_Parse(&str);
+    if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    Q_strncpyz(info->date, token, sizeof(info->date));
+    
+    return info;
+}
+
 
 /*
 ===============
@@ -8,11 +162,13 @@ RS_SendTime
 Sends a time record to the API server
 ===============
 */
-void RS_SendTime(const char *cmdString) {
+static void RS_SendTime(const char *cmdString) {
     char *response;
     char *jsonString;
     cJSON *json;
 
+    timeInfo_t *timeInfo = RS_ParseClientTimerStop(cmdString);
+    client_t *client = &svs.clients[timeInfo->clientNum];
     
     // Create a JSON object for the request
     json = cJSON_CreateObject();
@@ -35,16 +191,24 @@ void RS_SendTime(const char *cmdString) {
     free(jsonString);
     
     if (response) {
-        RS_PrintAPIResponse(response);
+        RS_ProcessAPIResponse(client, response);
         free(response);
     } else {
-        RS_GameSendServerCommand(-1, "print \"^1Failed to connect to record server\n\"");
+        RS_GameSendServerCommand(timeInfo->clientNum, "print \"^1Failed to connect to record server\n\"");
     }
 }
 
-qboolean RS_IsClientTimerStop(const char *s) {
-    // Extra logic here to make sure it's a true timer stop
-    // Potential: compare playerstates between this and last frame
-    // Check for timer state bit and that it's non-zero
-    return startsWith(s, "ClientTimerStop: ") ? qtrue : qfalse;
+void RS_Gateway(const char *s) {
+    timeInfo_t* timeInfo = RS_ParseClientTimerStop(s);
+    if (timeInfo && Cvar_VariableIntegerValue("sv_cheats") == 0) {
+        client_t *client = &svs.clients[timeInfo->clientNum]
+        if (client->loggedIn) {
+            RS_EndAndRenameDemo(client, timeInfo);
+            Sys_CreateThread(RS_SendTime, s);
+        }
+        else
+            RS_GameSendServerCommand(timeInfo->clientNum, "print \"^7You are not logged in^5.\n\"");
+
+        RS_RestartDemoRecord();
+    }
 }

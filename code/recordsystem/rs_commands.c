@@ -1,11 +1,12 @@
-#include "recordsystem.h"
+#include "../server/server.h"
 #include "cJSON.h"
 
-static void RS_Top(int clientNum, const char *plyrName, const char *str) {
+static void RS_Top(client_t *client, const char *str) {
     char *response;
     char *encoded_str;
     char *encoded_map;
     char url[512];
+    int clientNum = client - svs.clients;
     
     // Encode the command string
     encoded_str = RS_UrlEncode(str);
@@ -34,17 +35,18 @@ static void RS_Top(int clientNum, const char *plyrName, const char *str) {
     response = RS_HttpGet(url);
     
     if (response) {
-        RS_PrintAPIResponse(response);
+        RS_ProcessAPIResponse(client, response);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
     }
 }
 
-static void RS_Recent(int clientNum, const char *plyrName, const char *str) {
+static void RS_Recent(client_t *client, const char *str) {
     char *response;
     char *encoded_str;
     char url[512];
+    int clientNum = client - svs.clients;
     
     encoded_str = RS_UrlEncode(str);
     if (!encoded_str) {
@@ -61,17 +63,18 @@ static void RS_Recent(int clientNum, const char *plyrName, const char *str) {
     response = RS_HttpGet(url);
     
     if (response) {
-        RS_PrintAPIResponse(response);
+        RS_ProcessAPIResponse(client, response);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
     }
 }
 
-static void RS_Login(int clientNum, const char *plyrName, const char *str) {
+static void RS_Login(client_t *client, const char *str) {
     char *response;
     char *jsonString;
     cJSON *json;
+    int clientNum = client - svs.clients;
     
     // Create a JSON object
     json = cJSON_CreateObject();
@@ -83,7 +86,7 @@ static void RS_Login(int clientNum, const char *plyrName, const char *str) {
     // Add client number and command string to the JSON object
     cJSON_AddNumberToObject(json, "clientNum", clientNum);
     cJSON_AddStringToObject(json, "cmdString", str);
-    cJSON_AddStringToObject(json, "plyrName", plyrName);
+    cJSON_AddStringToObject(json, "plyrName", client->name);
     
     // Convert JSON object to string
     jsonString = cJSON_Print(json);
@@ -94,6 +97,7 @@ static void RS_Login(int clientNum, const char *plyrName, const char *str) {
         return;
     }
     
+    client->awaitingLogin = qtrue;
     // Make the HTTP request
     response = RS_HttpPost("http://localhost:8000/api/commands/login", 
                           "application/json", jsonString);
@@ -102,29 +106,36 @@ static void RS_Login(int clientNum, const char *plyrName, const char *str) {
     free(jsonString);
     
     if (response) {
-        RS_PrintAPIResponse(response);
+        RS_ProcessAPIResponse(client, response);
         free(response);
+        client->loggedIn = qtrue;
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
     }
+    
+    client->awaitingLogin = qfalse;
 }
 
-static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
+static void RS_Logout(client_t *client, const char *str) {
     char *response;
     char *jsonString;
     cJSON *json;
+    int clientNum = client - svs.clients;
+
+    client->loggedIn = qfalse; // Log them out locally, don't wait for server.
+    RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7you are now logged out^5.^7\n\"", client->name));
     
     // Create a JSON object
     json = cJSON_CreateObject();
     if (!json) {
-        RS_GameSendServerCommand(clientNum, "print \"^1Error creating JSON object\n\"");
+        Com_Printf("^1Error creating JSON object\n");
         return;
     }
     
     // Add client number and command string to the JSON object
     cJSON_AddNumberToObject(json, "clientNum", clientNum);
     cJSON_AddStringToObject(json, "cmdString", str);
-    cJSON_AddStringToObject(json, "plyrName", plyrName);
+    cJSON_AddStringToObject(json, "plyrName", client->name);
     
     // Convert JSON object to string
     jsonString = cJSON_Print(json);
@@ -135,6 +146,7 @@ static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
         return;
     }
     
+    client->awaitingLogout = qtrue; // Let game know that client is waiting for remote logout
     // Make the HTTP request
     response = RS_HttpPost("http://localhost:8000/api/commands/logout", 
                           "application/json", jsonString);
@@ -143,8 +155,9 @@ static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
     free(jsonString);
     
     if (response) {
-        RS_PrintAPIResponse(response);
+        RS_ProcessAPIResponse(client, response);
         free(response);
+        client->awaitingLogout = qfalse;
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
     }
@@ -152,25 +165,23 @@ static void RS_Logout(int clientNum, const char *plyrName, const char *str) {
 
 typedef struct {
     const char *pattern;
-    void (*handler)(int clientNum, const char *plyrName, const char *str);
+    void (*handler)(client_t *client, const char *str);
 } Module;
 
 static Module modules[] = {
     {"top", RS_Top},
     {"recent", RS_Recent},
     {"login", RS_Login},
-    {"logout", RS_Logout},
-    {"rs_record", RS_StartThreadedRecord},
-    {"rs_stoprecord", RS_StopThreadedRecord}
+    {"logout", RS_Logout}
 };
 
-qboolean RS_CommandGateway(int clientNum, const char *plyrName, const char *s) {
+qboolean RS_ExecuteClientCommand(client_t *client, const char *s) {
     // Check each command pattern
     int numModules = sizeof(modules) / sizeof(modules[0]);
     for (int i = 0; i < numModules; i++) {
         if (startsWith(s, va("%s ",modules[i].pattern)) || Q_stricmp(s, modules[i].pattern) == 0) {
             // Call the appropriate handler function
-            modules[i].handler(clientNum, plyrName, s);
+            modules[i].handler(client, s);
             return qtrue;
         }
     }

@@ -230,19 +230,20 @@ typedef struct client_s {
 	char			tld[3]; // "XX\0"
 	const char		*country;
 
-#ifdef DEDICATED
-	qboolean		isLogged;
-	const char		*uuid;
+#ifdef ENABLE_RS
+	qboolean		loggedIn;
+	qboolean 		demoWaiting;
+	qboolean 		awaitingLogin;
+	qboolean		awaitingLogout;
 	qboolean		isRecording;
+	qboolean		isSpectating;
+	const char		*uuid;
 	fileHandle_t	demoFile;
 
 	int		eventMask;
 	int		demoCommandSequence;
 	int		demoDeltaNum;
 	int		demoMessageSequence;
-
-	msg_t		gamestateMsg;
-	qboolean demoWaiting;
 #endif
 } client_t;
 
@@ -513,3 +514,7 @@ void SV_LoadFilters( const char *filename );
 const char *SV_RunFilters( const char *userinfo, const netadr_t *addr );
 void SV_AddFilter_f( void );
 void SV_AddFilterCmd_f( void );
+
+#ifdef ENABLE_RS
+#include "../recordsystem/recordsystem.h"
+#endif

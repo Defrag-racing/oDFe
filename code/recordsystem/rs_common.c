@@ -1,4 +1,4 @@
-#include "recordsystem.h"
+#include "../server/server.h"
 #include <curl/curl.h>
 #include "cJSON.h"
 
@@ -301,7 +301,7 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
 };
 
 
-void RS_PrintAPIResponse(const char *jsonString) {
+void RS_ProcessAPIResponse(client_t *client, const char *jsonString) {
     cJSON *json;
     cJSON *targetClientObj;
     cJSON *messageObj;
@@ -314,7 +314,7 @@ void RS_PrintAPIResponse(const char *jsonString) {
         Com_Printf("RS: Failed to parse JSON: %s\n", cJSON_GetErrorPtr());
         return;
     }
-    
+
     // Extract targetClient field
     targetClientObj = cJSON_GetObjectItem(json, "targetClient");
     if (targetClientObj && cJSON_IsNumber(targetClientObj)) {

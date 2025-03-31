@@ -21,11 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 // sv_client.c -- server code for dealing with clients
 
-#ifdef ENABLE_RS
-#include "../recordsystem/recordsystem.h"
-#else
 #include "server.h"
-#endif
 
 static void SV_CloseDownload( client_t *cl );
 
@@ -871,6 +867,10 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 		return;		// already dropped
 	}
 
+	#ifdef ENABLE_RS
+	RS_StopRecord(drop);
+	#endif
+
 	isBot = drop->netchan.remoteAddress.type == NA_BOT;
 
 	Q_strncpyz( name, drop->name, sizeof( name ) );	// for further DPrintf() because drop->name will be nuked in SV_SetUserinfo()
@@ -1173,9 +1173,14 @@ void SV_ClientEnterWorld( client_t *client ) {
 
 	client->deltaMessage = client->netchan.outgoingSequence - (PACKET_BACKUP + 1); // force delta reset
 	client->lastSnapshotTime = svs.time - 9999; // generate a snapshot immediately
-
 	// call the game begin function
 	VM_Call( gvm, 1, GAME_CLIENT_BEGIN, clientNum );
+	#ifdef ENABLE_RS
+	client->isRecording = qfalse;
+	Com_DPrintf("-----here----\n");
+	Com_DPrintf("Logged: %i, Sequence: %i\n", client->loggedIn, client->reliableSequence);
+	// client->loggedIn = qfalse;
+	#endif
 }
 
 
@@ -2043,7 +2048,7 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 #ifndef DEDICATED
 	if ( !com_cl_running->integer && bFloodProtect && SV_FloodProtect( cl ) ) {
 #else
-	if ( bFloodProtect && SV_FloodProtect( cl ) ) {
+	if ( bFloodProtect && SV_FloodProtect( cl ) ) {	
 #endif
 		// ignore any other text messages from this client but let them keep playing
 		Com_DPrintf( "client text ignored for %s: %s\n", cl->name, Cmd_Argv(0) );
@@ -2054,6 +2059,16 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 				Cmd_Args_Sanitize( "\n\r;" ); // handle ';' for OSP
 			else
 				Cmd_Args_Sanitize( "\n\r" );
+			#ifdef ENABLE_RS
+			if ( Q_streq( Cmd_Argv(0), "team") && Q_streq( Cmd_Argv(1), "spectator") && Q_streq( Cmd_Argv(2), "\0")) {
+				cl->isSpectating = qtrue;
+				RS_StopRecord(cl);
+			}
+
+			if ( Q_streq( Cmd_Argv(0), "team") && Q_streq( Cmd_Argv(1), "free") && Q_streq( Cmd_Argv(2), "\0")) {
+				cl->isSpectating = qfalse;
+			}
+			#endif
 			VM_Call( gvm, 1, GAME_CLIENT_COMMAND, cl - svs.clients );
 		}
 	}
@@ -2089,9 +2104,7 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 	}
 
 #ifdef ENABLE_RS
-	int clientNum;
-	clientNum = cl - svs.clients;
-	if (!RS_CommandGateway(clientNum, cl->name, s)) {
+	if (!RS_ExecuteClientCommand(cl, s)) {
 		if ( !SV_ExecuteClientCommand( cl, s ) ) {
 			return qfalse;
 		}

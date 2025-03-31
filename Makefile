@@ -1307,7 +1307,6 @@ Q3DOBJ = \
   $(B)/ded/cm_trace.o \
   $(B)/ded/cmd.o \
   $(B)/ded/cJSON.o \
-  $(B)/ded/rs_main.o \
   $(B)/ded/rs_records.o \
   $(B)/ded/rs_common.o \
   $(B)/ded/rs_commands.o \
