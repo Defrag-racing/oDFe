@@ -41,6 +41,7 @@ void RS_StartRecord(client_t *client) {
         return;
     }
 
+    Q_strncpyz(client->demoName, demoName, sizeof(demoName));
     // Set client's demo flags
     client->isRecording = qtrue;
     client->demoWaiting = qtrue;
@@ -56,29 +57,59 @@ RS_StopRecord
 stop recording a demo
 ====================
 */
-void RS_StopRecord(client_t *client, timeInfo_t timeInfo) {
-        if (rename) {
-            char finalName[MAX_OSPATH];
-        }
+void RS_SaveDemo(client_t *client, timeInfo_t *timeInfo) {
+    int clientNum = client - svs.clients;
+    char finalName[MAX_OSPATH];
 
-        if (timeInfo->gametype == 1) { // run mode
-            Com_sprintf( finalName, sizeof( finalName ), "%s[df.%s%s]%i(%s)(%s).dm_68", \
-            timeInfo->mapName, \
-            timeInfo->promode ? "cpm" : "vq3", \
-            timeInfo->time, \
-            client->uuid, \
-            client->displayName);
-        }
-        else
-            Com_sprintf( finalName, sizeof( finalName ), "%s[df.%s.%i]%i(%s)(%s).dm_68", \
-            timeInfo->mapName, \
-            timeInfo->promode ? "cpm" : "vq3", \
-            timeInfo->submode \
-            timeInfo->time, \
-            client->uuid, \
-            client->displayName);
+    if (!client->isRecording) {
+        Com_Printf("Client %i is not being recorded\n", clientNum);
+        return;
+    }
 
-		FS_Rename( tempName, finalName );
+    if (client->demoFile != FS_INVALID_HANDLE) {
+        int len;
+
+        // Write proper EOF markers - TWO -1 values
+        len = -1;
+        FS_Write(&len, 4, client->demoFile);
+        FS_Write(&len, 4, client->demoFile);
+        
+        FS_FCloseFile(client->demoFile);
+        client->demoFile = FS_INVALID_HANDLE;
+        Com_Printf("Stopped recording client %i\n", clientNum);
+    }
+
+    if (timeInfo->gametype == 1) { // run mode
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s]%s[%s][%s].dm_68", \
+        timeInfo->mapname, \
+        timeInfo->promode ? "cpm" : "vq3", \
+        formatTime(timeInfo->time), \
+        client->displayName, \
+        client->uuid);
+    }
+    else {
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s.%i]%s[%s][%s].dm_68", \
+        timeInfo->mapname, \
+        timeInfo->promode ? "cpm" : "vq3", \
+        timeInfo->submode, \
+        formatTime(timeInfo->time), \
+        client->displayName, \
+        client->uuid);
+    }
+
+    FS_Rename( client->demoName, finalName );
+    Com_Printf("Saved demo: %s\n", finalName);
+    client->demoFile = FS_INVALID_HANDLE;
+}
+
+/*
+====================
+RS_StopRecord
+
+stop recording a demo
+====================
+*/
+void RS_StopRecord(client_t *client) {
     int clientNum = client - svs.clients;
 
     if (!client->isRecording) {
@@ -206,7 +237,9 @@ void RS_WriteGamestate(client_t *client) {
     FS_Write(&len, 4, client->demoFile);
 
     len = LittleLong(msg.cursize);
+
     FS_Write(&len, 4, client->demoFile);
+
     FS_Write(msg.data, msg.cursize, client->demoFile);
 }
 

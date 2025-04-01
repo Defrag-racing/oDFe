@@ -237,13 +237,15 @@ typedef struct client_s {
 	qboolean		awaitingLogout;
 	qboolean		isRecording;
 	qboolean		isSpectating;
-	const char		*uuid;
+	char			uuid[MAX_NAME_LENGTH];
+	char			displayName[MAX_NAME_LENGTH];
 	fileHandle_t	demoFile;
+	char			demoName[MAX_OSPATH];
 
-	int		eventMask;
-	int		demoCommandSequence;
-	int		demoDeltaNum;
-	int		demoMessageSequence;
+	int				eventMask;
+	int				demoCommandSequence;
+	int				demoDeltaNum;
+	int				demoMessageSequence;
 #endif
 } client_t;
 

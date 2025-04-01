@@ -338,3 +338,18 @@ void RS_ProcessAPIResponse(client_t *client, const char *jsonString) {
     // Clean up
     cJSON_Delete(json);
 }
+
+char* formatTime(int ms) {
+    static char timeString[10]; // Increased to 10 to handle all characters + null
+    
+    int minutes = ms / 60000;
+    ms %= 60000;
+    
+    int seconds = ms / 1000;
+    ms %= 1000;
+    
+    // Format as MM.SS.MMM (with leading zeros)
+    sprintf(timeString, "%02d.%02d.%03d", minutes, seconds, ms);
+    
+    return timeString;
+}

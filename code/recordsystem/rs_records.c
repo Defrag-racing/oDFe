@@ -7,19 +7,6 @@ ParseTimerStop
 Parses a timer stop log message into a structured format
 ====================
 */
-typedef struct {
-    int clientNum;          // Entity/client number
-    int time;               // Timer time (in milliseconds)
-    char mapname[64];       // Map name
-    char netname[36];       // Player's name
-    int gametype;           // Game type
-    int promode;            // Promode enabled
-    int submode;            // Sub-mode
-    int interferenceOff;    // Interference off flag
-    int obEnabled;          // Out of bounds enabled
-    int version;            // Version number
-    char date[16];          // Date string (YYYY-MM-DD)
-} timeInfo_t;
 
 static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
     timeInfo_t* info;
@@ -87,12 +74,12 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
     }
     // Remove quotes
     if (token[0] == '"') {
-        Q_strncpyz(info->netname, token + 1, sizeof(info->netname) - 1);
-        if (info->netname[strlen(info->netname) - 1] == '"') {
-            info->netname[strlen(info->netname) - 1] = '\0';
+        Q_strncpyz(info->name, token + 1, sizeof(info->name) - 1);
+        if (info->name[strlen(info->name) - 1] == '"') {
+            info->name[strlen(info->name) - 1] = '\0';
         }
     } else {
-        Q_strncpyz(info->netname, token, sizeof(info->netname));
+        Q_strncpyz(info->name, token, sizeof(info->name));
     }
     
     // Parse gametype
@@ -201,14 +188,14 @@ static void RS_SendTime(const char *cmdString) {
 void RS_Gateway(const char *s) {
     timeInfo_t* timeInfo = RS_ParseClientTimerStop(s);
     if (timeInfo && Cvar_VariableIntegerValue("sv_cheats") == 0) {
-        client_t *client = &svs.clients[timeInfo->clientNum]
+        client_t *client = &svs.clients[timeInfo->clientNum];
         if (client->loggedIn) {
-            RS_EndAndRenameDemo(client, timeInfo);
+            RS_SaveDemo(client, timeInfo);
             Sys_CreateThread(RS_SendTime, s);
         }
         else
             RS_GameSendServerCommand(timeInfo->clientNum, "print \"^7You are not logged in^5.\n\"");
 
-        RS_RestartDemoRecord();
+        RS_StopRecord(client);
     }
 }

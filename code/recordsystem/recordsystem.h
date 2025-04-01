@@ -13,6 +13,20 @@
 qboolean startsWith(const char *string, const char *prefix);
 qboolean endsWith(const char *string, const char *suffix);
 
+typedef struct {
+    int clientNum;          // Entity/client number
+    int time;               // Timer time (in milliseconds)
+    char mapname[64];       // Map name
+    char name[36];          // Player's name
+    int gametype;           // Gametype
+    int promode;            // Promode enabled
+    int submode;            // Sub-mode
+    int interferenceOff;    // Interference off flag
+    int obEnabled;          // Out of bounds enabled
+    int version;            // Version number
+    char date[16];          // Date string (YYYY-MM-DD)
+} timeInfo_t;
+
 /*
 ===============
 RS_Gateway
@@ -67,6 +81,8 @@ typedef struct {
     char *memory;
     size_t size;
 } MemoryStruct;
+
+char* formatTime(int ms);
 
 /*
 ===============
@@ -130,5 +146,6 @@ RS_WriteSnapshotToDemo
 void RS_WriteSnapshot(client_t *client);
 void RS_WriteDemoMessage(client_t *client, msg_t *msg);
 
+void RS_SaveDemo(client_t *client, timeInfo_t *timeInfo);
 
 #endif // __RECORDSYSTEM_H__

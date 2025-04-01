@@ -109,6 +109,8 @@ static void RS_Login(client_t *client, const char *str) {
         RS_ProcessAPIResponse(client, response);
         free(response);
         client->loggedIn = qtrue;
+        Com_sprintf(client->uuid, MAX_NAME_LENGTH, "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
+        Com_sprintf(client->displayName, MAX_NAME_LENGTH, "Frog");
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
     }
