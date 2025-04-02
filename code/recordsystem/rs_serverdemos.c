@@ -20,7 +20,6 @@ void RS_StartRecord(client_t *client) {
     int clientNum = client - svs.clients;
 
     if (client->state != CS_ACTIVE) {
-        Com_Printf("Client must be active\n");
         return;
     }
 
@@ -57,10 +56,14 @@ RS_StopRecord
 stop recording a demo
 ====================
 */
-void RS_SaveDemo(client_t *client, timeInfo_t *timeInfo) {
+void RS_SaveDemo(client_t *client) {
     int clientNum = client - svs.clients;
     char finalName[MAX_OSPATH];
+    timeInfo_t *timeInfo = client->timerStopInfo;
 
+    clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+    Com_DPrintf("Saving demo for frame: %i\n", frame->frameNum);
+    Com_DPrintf("Stats: %s\n", frame->ps.stats);
     if (!client->isRecording) {
         Com_Printf("Client %i is not being recorded\n", clientNum);
         return;
@@ -97,9 +100,26 @@ void RS_SaveDemo(client_t *client, timeInfo_t *timeInfo) {
         client->uuid);
     }
 
+    if (client->demoFile != FS_INVALID_HANDLE) {
+        int len;
+
+        // Write proper EOF markers - TWO -1 values
+        len = -1;
+        FS_Write(&len, 4, client->demoFile);
+        FS_Write(&len, 4, client->demoFile);
+        
+        FS_FCloseFile(client->demoFile);
+        client->demoFile = FS_INVALID_HANDLE;
+        Com_Printf("Stopped recording client %i\n", clientNum);
+    }
+
     FS_Rename( client->demoName, finalName );
     Com_Printf("Saved demo: %s\n", finalName);
+    client->awaitingDemoSave = qfalse;
     client->demoFile = FS_INVALID_HANDLE;
+    client->isRecording = qfalse;
+    client->demoWaiting = qfalse;
+    client->demoDeltaNum = 0;
 }
 
 /*
@@ -110,6 +130,8 @@ stop recording a demo
 ====================
 */
 void RS_StopRecord(client_t *client) {
+    if (client->awaitingDemoSave)
+        return RS_SaveDemo(client);
     int clientNum = client - svs.clients;
 
     if (!client->isRecording) {
@@ -281,6 +303,7 @@ void RS_WriteSnapshot(client_t *client) {
     
     // Get current snapshot
     clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+    // Com_DPrintf("Writing snapshot to client: %i\n", frame->frameNum);
     
     // Initialize message buffer
     MSG_Init(&msg, bufData, sizeof(bufData));

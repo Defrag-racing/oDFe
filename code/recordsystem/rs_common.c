@@ -353,3 +353,8 @@ char* formatTime(int ms) {
     
     return timeString;
 }
+
+// dfState_t RS_GetDFState(client_t *client) {
+//     char stats[MAX_STATS];
+//     stats = client->ps.stats;
+// }

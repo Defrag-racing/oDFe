@@ -695,6 +695,11 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
     SV_Netchan_Transmit(client, msg);
 
 #ifdef ENABLE_RS
+	int frameMsec = 1000 / sv_fps->integer * com_timescale->value;
+	if (client->awaitingDemoSave)
+		if (svs.time - client->timerStopTime > 500*frameMsec)
+			RS_SaveDemo(client); // it's been max frames from timer stop
+
     //If we're recording a demo for this client
     if (client->isRecording) {
         // If client is active and we're waiting to start recording
@@ -714,6 +719,7 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
 			RS_StartRecord(client);
 		}
 	}
+	
 #endif
 }
 

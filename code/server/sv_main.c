@@ -1388,7 +1388,7 @@ void SV_Frame( int msec ) {
 		sv.timeResidual -= frameMsec;
 		svs.time += frameMsec;
 		sv.time += frameMsec;
-
+		
 		// let everything in the world think and move
 		VM_Call( gvm, 1, GAME_RUN_FRAME, sv.time );
 	}

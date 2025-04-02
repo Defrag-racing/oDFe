@@ -186,16 +186,18 @@ static void RS_SendTime(const char *cmdString) {
 }
 
 void RS_Gateway(const char *s) {
-    timeInfo_t* timeInfo = RS_ParseClientTimerStop(s);
+    timeInfo_t *timeInfo = RS_ParseClientTimerStop(s);
     if (timeInfo && Cvar_VariableIntegerValue("sv_cheats") == 0) {
         client_t *client = &svs.clients[timeInfo->clientNum];
         if (client->loggedIn) {
-            RS_SaveDemo(client, timeInfo);
+            client->awaitingDemoSave = qtrue;
+            client->timerStopTime = svs.time;
+            client->timerStopInfo = timeInfo;
             Sys_CreateThread(RS_SendTime, s);
         }
-        else
+        else {
             RS_GameSendServerCommand(timeInfo->clientNum, "print \"^7You are not logged in^5.\n\"");
-
-        RS_StopRecord(client);
+            RS_StopRecord(client);
+        }
     }
 }

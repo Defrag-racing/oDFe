@@ -157,6 +157,20 @@ typedef enum {
 	GSA_ACKED		// gamestate acknowledged, no retansmissions needed
 } gameStateAck_t;
 
+typedef struct {
+    int clientNum;          // Entity/client number
+    int time;               // Timer time (in milliseconds)
+    char mapname[64];       // Map name
+    char name[36];          // Player's name
+    int gametype;           // Gametype
+    int promode;            // Promode enabled
+    int submode;            // Sub-mode
+    int interferenceOff;    // Interference off flag
+    int obEnabled;          // Out of bounds enabled
+    int version;            // Version number
+    char date[16];          // Date string (YYYY-MM-DD)
+} timeInfo_t;
+
 typedef struct client_s {
 	clientState_t	state;
 	char			userinfo[MAX_INFO_STRING];		// name, etc
@@ -237,6 +251,9 @@ typedef struct client_s {
 	qboolean		awaitingLogout;
 	qboolean		isRecording;
 	qboolean		isSpectating;
+	qboolean		awaitingDemoSave;
+	int 			timerStopTime;
+	timeInfo_t		*timerStopInfo;
 	char			uuid[MAX_NAME_LENGTH];
 	char			displayName[MAX_NAME_LENGTH];
 	fileHandle_t	demoFile;
