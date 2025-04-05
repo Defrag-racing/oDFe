@@ -301,42 +301,92 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
 };
 
 
-void RS_ProcessAPIResponse(client_t *client, const char *jsonString) {
-    cJSON *json;
-    cJSON *targetClientObj;
-    cJSON *messageObj;
-    int targetClient = -1;
-    const char *message = NULL;
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+// Assuming you have a JSON parsing library like cJSON
+#include "cJSON.h"
+
+// Function to parse JSON response into apiResponse_t structure
+apiResponse_t *RS_ParseAPIResponse(const char* jsonString) {
+    // Allocate memory for the response structure
+    apiResponse_t *response = (apiResponse_t*)malloc(sizeof(apiResponse_t));
+    if (!response) {
+        return NULL; // Memory allocation failed
+    }
     
-    // Parse the JSON
-    json = cJSON_Parse(jsonString);
+    // Initialize with default values
+    response->success = 0;
+    response->targetClientNum = 0;
+    response->message = NULL;
+    memset(response->displayName, 0, MAX_NAME_LENGTH);
+    memset(response->uuid, 0, UUID_LENGTH);
+    
+    // Parse JSON string
+    cJSON* json = cJSON_Parse(jsonString);
     if (!json) {
-        Com_Printf("RS: Failed to parse JSON: %s\n", cJSON_GetErrorPtr());
+        free(response);
+        return NULL; // JSON parsing failed
+    }
+    
+    // Extract success field (integer)
+    cJSON* successField = cJSON_GetObjectItem(json, "success");
+    if (cJSON_IsNumber(successField)) {
+        response->success = successField->valueint;
+    }
+    
+    // Extract targetClientNumfield (integer)
+    cJSON* targetClientNumField = cJSON_GetObjectItem(json, "targetClientNum");
+    if (cJSON_IsNumber(targetClientNumField)) {
+        response->targetClientNum = targetClientNumField->valueint;
+    }
+    
+    // Extract message field (string array)
+    cJSON* messageField = cJSON_GetObjectItem(json, "message");
+    if (cJSON_IsString(messageField) && messageField->valuestring && strlen(messageField->valuestring) > 0) {
+        response->message = strdup(messageField->valuestring);
+    }
+    
+    // Extract displayName field (string array)
+    cJSON* displayNameField = cJSON_GetObjectItem(json, "displayName");
+    if (cJSON_IsString(displayNameField) && displayNameField->valuestring) {
+        strncpy(response->displayName, displayNameField->valuestring, MAX_NAME_LENGTH - 1);
+        response->displayName[MAX_NAME_LENGTH - 1] = '\0'; // Ensure null termination
+    }
+    
+    // Extract uuid field (string array)
+    cJSON* uuidField = cJSON_GetObjectItem(json, "uuid");
+    if (cJSON_IsString(uuidField) && uuidField->valuestring) {
+        strncpy(response->uuid, uuidField->valuestring, UUID_LENGTH - 1);
+        response->uuid[UUID_LENGTH - 1] = '\0'; // Ensure null termination
+    }
+
+    // Clean up JSON object
+    cJSON_Delete(json);
+    
+    return response;
+}
+
+void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
+    const char *finalMessage="";
+    const char *mentionPrefix="";
+    client_t *targetClient;
+
+    if (response->targetClientNum < -1) {
+        Com_DPrintf("%s", response->message);
         return;
     }
 
-    // Extract targetClient field
-    targetClientObj = cJSON_GetObjectItem(json, "targetClient");
-    if (targetClientObj && cJSON_IsNumber(targetClientObj)) {
-        targetClient = targetClientObj->valueint;
+    if (mentionClient && response->targetClientNum >= 0) {
+        targetClient = &svs.clients[response->targetClientNum];
+        strlen(targetClient->name) > 0 ? mentionPrefix = va("%s^5, ", targetClient->name) : "";
     }
     
-    // Extract message field
-    messageObj = cJSON_GetObjectItem(json, "message");
-    if (messageObj && cJSON_IsString(messageObj)) {
-        message = messageObj->valuestring;
+    if (response->message != NULL) {
+        finalMessage = va("%s%s", mentionPrefix, response->message);
+        RS_GameSendServerCommand(response->targetClientNum, va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
     }
-    
-    // Send the message to the target client
-    if (message && *message) {
-        // Send the message directly, preserving any newlines
-        RS_GameSendServerCommand(targetClient, va("print \"^5(^7defrag^5.^7racing^5)^7 %s\"", message));
-    } else {
-        Com_Printf("RS: Missing message in API response\n");
-    }
-    
-    // Clean up
-    cJSON_Delete(json);
 }
 
 char* formatTime(int ms) {

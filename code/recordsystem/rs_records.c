@@ -150,12 +150,11 @@ Sends a time record to the API server
 ===============
 */
 static void RS_SendTime(const char *cmdString) {
-    char *response;
+    apiResponse_t *response;
     char *jsonString;
     cJSON *json;
 
     timeInfo_t *timeInfo = RS_ParseClientTimerStop(cmdString);
-    client_t *client = &svs.clients[timeInfo->clientNum];
     
     // Create a JSON object for the request
     json = cJSON_CreateObject();
@@ -165,20 +164,22 @@ static void RS_SendTime(const char *cmdString) {
     
     // Add properties to the JSON object
     cJSON_AddStringToObject(json, "cmdString", cmdString);
+    cJSON_AddStringToObject(json, "uuid", svs.clients[timeInfo->clientNum].uuid);
     
     // Convert JSON object to string
     jsonString = cJSON_Print(json);
     cJSON_Delete(json); // Free the JSON object
     
+    Com_DPrintf("json payload: %s\n", jsonString);
     // Make the HTTP request
-    response = RS_HttpPost("http://localhost:8000/api/records", 
-                           "application/json", jsonString);
+    response = RS_ParseAPIResponse(RS_HttpPost("http://localhost:8000/api/records", 
+                           "application/json", jsonString));
     
     // Free the JSON string
     free(jsonString);
     
     if (response) {
-        RS_ProcessAPIResponse(client, response);
+        RS_PrintAPIResponse(response, qtrue);
         free(response);
     } else {
         RS_GameSendServerCommand(timeInfo->clientNum, "print \"^1Failed to connect to record server\n\"");

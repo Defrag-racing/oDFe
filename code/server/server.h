@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 										// GAME BOTH REFERENCE !!!
 
 #define	MAX_ENT_CLUSTERS	16
+#define	UUID_LENGTH		37
 
 typedef struct svEntity_s {
 	struct worldSector_s *worldSector;
@@ -254,7 +255,7 @@ typedef struct client_s {
 	qboolean		awaitingDemoSave;
 	int 			timerStopTime;
 	timeInfo_t		*timerStopInfo;
-	char			uuid[MAX_NAME_LENGTH];
+	char			uuid[UUID_LENGTH];
 	char			displayName[MAX_NAME_LENGTH];
 	fileHandle_t	demoFile;
 	char			demoName[MAX_OSPATH];

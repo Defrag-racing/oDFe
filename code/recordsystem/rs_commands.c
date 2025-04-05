@@ -2,7 +2,7 @@
 #include "cJSON.h"
 
 static void RS_Top(client_t *client, const char *str) {
-    char *response;
+    apiResponse_t *response;
     char *encoded_str;
     char *encoded_map;
     char url[512];
@@ -32,10 +32,10 @@ static void RS_Top(client_t *client, const char *str) {
     free(encoded_map);
     
     // Make the HTTP request
-    response = RS_HttpGet(url);
+    response = RS_ParseAPIResponse(RS_HttpGet(url));
     
     if (response) {
-        RS_ProcessAPIResponse(client, response);
+        RS_PrintAPIResponse(response, qfalse);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
@@ -43,7 +43,7 @@ static void RS_Top(client_t *client, const char *str) {
 }
 
 static void RS_Recent(client_t *client, const char *str) {
-    char *response;
+    apiResponse_t *response;
     char *encoded_str;
     char url[512];
     int clientNum = client - svs.clients;
@@ -60,10 +60,10 @@ static void RS_Recent(client_t *client, const char *str) {
     free(encoded_str); // Free encoded string when done
     
     // Make the HTTP request
-    response = RS_HttpGet(url);
+    response = RS_ParseAPIResponse(RS_HttpGet(url));
     
     if (response) {
-        RS_ProcessAPIResponse(client, response);
+        RS_PrintAPIResponse(response, qfalse);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
@@ -71,15 +71,17 @@ static void RS_Recent(client_t *client, const char *str) {
 }
 
 static void RS_Login(client_t *client, const char *str) {
-    char *response;
+    char *responseString;
     char *jsonString;
     cJSON *json;
     int clientNum = client - svs.clients;
+    apiResponse_t *response;
     
     // Create a JSON object
     json = cJSON_CreateObject();
     if (!json) {
-        RS_GameSendServerCommand(clientNum, "print \"^1Error creating JSON object\n\"");
+        RS_GameSendServerCommand(clientNum, "print \"^1Internal engine error, contact server admin.\n\"");
+        Com_DPrintf("RS_ERROR: Couldn't create JSON Object for string: %s\n", str );
         return;
     }
     
@@ -93,76 +95,47 @@ static void RS_Login(client_t *client, const char *str) {
     cJSON_Delete(json); // Free the JSON object
     
     if (!jsonString) {
-        RS_GameSendServerCommand(clientNum, "print \"^1Error serializing JSON\n\"");
+        RS_GameSendServerCommand(clientNum, "print \"^1Internal engine error, contact server admin.\n\"");
+        Com_DPrintf("RS_ERROR: Couldn't convert JSON object to string for string: %s\n", str );
         return;
     }
     
     client->awaitingLogin = qtrue;
     // Make the HTTP request
-    response = RS_HttpPost("http://localhost:8000/api/commands/login", 
+    responseString = RS_HttpPost("http://localhost:8000/api/commands/login", 
                           "application/json", jsonString);
     
-    // Free the JSON string
     free(jsonString);
     
+    response = RS_ParseAPIResponse(responseString);
+
     if (response) {
-        RS_ProcessAPIResponse(client, response);
-        free(response);
-        client->loggedIn = qtrue;
-        Com_sprintf(client->uuid, MAX_NAME_LENGTH, "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
-        Com_sprintf(client->displayName, MAX_NAME_LENGTH, "Frog");
+        if (response->success && strlen(response->uuid) > 0 && strlen(response->displayName) > 0) {
+            client->loggedIn = client->awaitingLogin; // Make sure client player is the same one that was awaiting login
+            strncpy(client->uuid, response->uuid, UUID_LENGTH);
+            strncpy(client->displayName, response->displayName, MAX_NAME_LENGTH);      
+        }
+        RS_PrintAPIResponse(response, qtrue);      
     } else {
-        RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
+        RS_GameSendServerCommand(clientNum, "print \"^1Bad response from server, contact defrag.racing admins\n\"");
+        Com_DPrintf("RS_ERROR: Couldn't parse response json: %s\n", jsonString );
     }
-    
+
     client->awaitingLogin = qfalse;
+    free(response);
 }
 
 static void RS_Logout(client_t *client, const char *str) {
-    char *response;
-    char *jsonString;
-    cJSON *json;
     int clientNum = client - svs.clients;
 
+    if (client->loggedIn == qfalse) {
+        RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7You are not logged in^5.\n\"", client->name));
+        return;
+    }
     client->loggedIn = qfalse; // Log them out locally, don't wait for server.
-    RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7you are now logged out^5.^7\n\"", client->name));
-    
-    // Create a JSON object
-    json = cJSON_CreateObject();
-    if (!json) {
-        Com_Printf("^1Error creating JSON object\n");
-        return;
-    }
-    
-    // Add client number and command string to the JSON object
-    cJSON_AddNumberToObject(json, "clientNum", clientNum);
-    cJSON_AddStringToObject(json, "cmdString", str);
-    cJSON_AddStringToObject(json, "plyrName", client->name);
-    
-    // Convert JSON object to string
-    jsonString = cJSON_Print(json);
-    cJSON_Delete(json); // Free the JSON object
-    
-    if (!jsonString) {
-        RS_GameSendServerCommand(clientNum, "print \"^1Error serializing JSON\n\"");
-        return;
-    }
-    
-    client->awaitingLogout = qtrue; // Let game know that client is waiting for remote logout
-    // Make the HTTP request
-    response = RS_HttpPost("http://localhost:8000/api/commands/logout", 
-                          "application/json", jsonString);
-    
-    // Free the JSON string
-    free(jsonString);
-    
-    if (response) {
-        RS_ProcessAPIResponse(client, response);
-        free(response);
-        client->awaitingLogout = qfalse;
-    } else {
-        RS_GameSendServerCommand(clientNum, "print \"^1Failed to connect to server\n\"");
-    }
+    strcpy(client->uuid, "");
+    strcpy(client->displayName, "");
+    RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7You are now logged out^5.\n\"", client->name));
 }
 
 typedef struct {

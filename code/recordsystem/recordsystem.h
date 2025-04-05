@@ -5,13 +5,18 @@
 
 #include <pthread.h>
 #include <string.h>
-// #include "../qcommon/q_shared.h"
-// #include "../qcommon/qcommon.h"
-// #include "../server/server.h"
 
 // String utility functions
 qboolean startsWith(const char *string, const char *prefix);
 qboolean endsWith(const char *string, const char *suffix);
+
+typedef struct {
+    int success;
+    int targetClientNum;
+    char *message;
+	char displayName[MAX_NAME_LENGTH];
+    char uuid[UUID_LENGTH];
+} apiResponse_t;
 
 /*
 ===============
@@ -102,8 +107,9 @@ The returned string must be freed by the caller
 */
 char* RS_UrlEncode(const char *str);
 
+apiResponse_t* RS_ParseAPIResponse(const char* jsonString);
 
-void RS_ProcessAPIResponse(client_t *client, const char *jsonString);
+void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient);
 
 void RS_StartRecord(client_t *client);
 
