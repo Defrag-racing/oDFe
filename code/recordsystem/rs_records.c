@@ -153,6 +153,7 @@ static void RS_SendTime(const char *cmdString) {
     apiResponse_t *response;
     char *jsonString;
     cJSON *json;
+    char url[512];
 
     timeInfo_t *timeInfo = RS_ParseClientTimerStop(cmdString);
     
@@ -171,9 +172,11 @@ static void RS_SendTime(const char *cmdString) {
     cJSON_Delete(json); // Free the JSON object
     
     Com_DPrintf("json payload: %s\n", jsonString);
+
+    Com_sprintf(url, sizeof(url), "http://%s/api/records", "149.28.120.254:8000");
+
     // Make the HTTP request
-    response = RS_ParseAPIResponse(RS_HttpPost("http://localhost:8000/api/records", 
-                           "application/json", jsonString));
+    response = RS_ParseAPIResponse(RS_HttpPost(url, "application/json", jsonString));
     
     // Free the JSON string
     free(jsonString);

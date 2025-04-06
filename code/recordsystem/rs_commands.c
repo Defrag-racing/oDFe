@@ -24,8 +24,8 @@ static void RS_Top(client_t *client, const char *str) {
     }
     
     // Build the URL
-    Com_sprintf(url, sizeof(url), "http://localhost:8000/api/commands/top?client_num=%d&cmd_string=%s&curr_map=%s", 
-                clientNum, encoded_str, encoded_map);
+    Com_sprintf(url, sizeof(url), "http://%s/api/commands/top?client_num=%d&cmd_string=%s&curr_map=%s", 
+                "149.28.120.254:8000", clientNum, encoded_str, encoded_map);
     
     // Free encoded strings when done
     free(encoded_str);
@@ -56,7 +56,7 @@ static void RS_Recent(client_t *client, const char *str) {
     
     // Build the URL
 
-    Com_sprintf(url, sizeof(url), "http://localhost:8000/api/commands/recent?client_num=%d&cmd_string=%s", clientNum, encoded_str);
+    Com_sprintf(url, sizeof(url), "http://%s/api/commands/recent?client_num=%d&cmd_string=%s", "149.28.120.254:8000", clientNum, encoded_str);
     free(encoded_str); // Free encoded string when done
     
     // Make the HTTP request
@@ -76,6 +76,7 @@ static void RS_Login(client_t *client, const char *str) {
     cJSON *json;
     int clientNum = client - svs.clients;
     apiResponse_t *response;
+    char url[512];
     
     // Create a JSON object
     json = cJSON_CreateObject();
@@ -101,9 +102,9 @@ static void RS_Login(client_t *client, const char *str) {
     }
     
     client->awaitingLogin = qtrue;
+    Com_sprintf(url, sizeof(url), "http://%s/api/commands/login", "149.28.120.254:8000");
     // Make the HTTP request
-    responseString = RS_HttpPost("http://localhost:8000/api/commands/login", 
-                          "application/json", jsonString);
+    responseString = RS_HttpPost(url, "application/json", jsonString);
     
     free(jsonString);
     

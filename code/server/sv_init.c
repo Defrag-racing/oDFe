@@ -805,11 +805,6 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_banFile, "Name of the file that is used for storing the server bans." );
 #endif
 
-#ifdef ENABLE_RS
-	rs_apiHost = Cvar_Get ("rs_apiHost", "api.q3df.run", CVAR_TEMP );
-	Cvar_SetDescription( sv_rconPassword, "Fully-qualified domain name of the recordsystem API" );
-#endif
-
 	sv_levelTimeReset = Cvar_Get( "sv_levelTimeReset", "1", CVAR_ARCHIVE_ND );
 	Cvar_SetDescription( sv_levelTimeReset, "Whether or not to reset leveltime after new map loads." );
 

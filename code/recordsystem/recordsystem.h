@@ -6,8 +6,6 @@
 #include <pthread.h>
 #include <string.h>
 
-extern	cvar_t	*rs_apiHost;
-
 // String utility functions
 qboolean startsWith(const char *string, const char *prefix);
 qboolean endsWith(const char *string, const char *suffix);
