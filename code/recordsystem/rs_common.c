@@ -380,7 +380,7 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
 
     if (mentionClient && response->targetClientNum >= 0) {
         targetClient = &svs.clients[response->targetClientNum];
-        strlen(targetClient->name) > 0 ? mentionPrefix = va("%s^5, ", targetClient->name) : "";
+        strlen(targetClient->name) > 0 ? mentionPrefix = va("%s", targetClient->name) : "";
     }
     
     if (response->message != NULL) {

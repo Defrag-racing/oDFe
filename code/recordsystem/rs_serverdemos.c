@@ -61,9 +61,6 @@ void RS_SaveDemo(client_t *client) {
     char finalName[MAX_OSPATH];
     timeInfo_t *timeInfo = client->timerStopInfo;
 
-    clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
-    Com_DPrintf("Saving demo for frame: %i\n", frame->frameNum);
-    Com_DPrintf("Stats: %s\n", frame->ps.stats);
     if (!client->isRecording) {
         Com_Printf("Client %i is not being recorded\n", clientNum);
         return;

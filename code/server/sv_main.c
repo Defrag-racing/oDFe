@@ -63,6 +63,10 @@ serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
 #endif
 
+#ifdef ENABLE_RS
+cvar_t	*rs_apiHost;
+#endif
+
 /*
 =============================================================================
 
