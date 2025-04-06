@@ -439,7 +439,7 @@ ifdef MINGW
   LDFLAGS += -Wl,--gc-sections -fvisibility=hidden
   LDFLAGS += -lwsock32 -lgdi32 -lwinmm -lole32 -lws2_32 -lpsapi -lcomctl32
   LDFLAGS += -flto
-  LDFLAGS += -pthreads
+  LDFLAGS += -lpthread
 
 
   CLIENT_LDFLAGS=$(LDFLAGS)
