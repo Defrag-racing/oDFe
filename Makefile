@@ -1392,7 +1392,7 @@ endif
 
 $(B)/$(TARGET_SERVER): $(Q3DOBJ)
 	$(echo_cmd) "LD $@"
-	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS) -lcurl
+	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS) -lcurl -lpthread
 
 #############################################################################
 ## CLIENT/SERVER RULES
