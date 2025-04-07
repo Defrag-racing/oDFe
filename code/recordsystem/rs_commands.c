@@ -157,7 +157,7 @@ qboolean RS_ExecuteClientCommand(client_t *client, const char *s) {
     for (int i = 0; i < numModules; i++) {
         if (startsWith(s, va("%s ",modules[i].pattern)) || Q_stricmp(s, modules[i].pattern) == 0) {
             // Call the appropriate handler function
-            modules[i].handler(client, s);
+            Sys_CreateThread(modules[i].handler, client, s);
             return qtrue;
         }
     }

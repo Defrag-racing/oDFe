@@ -33,14 +33,37 @@ qboolean endsWith(const char *string, const char *suffix) {
     return (strcmp(string + stringLen - suffixLen, suffix) == 0) ? qtrue : qfalse;
 }
 
+// Structure to hold the thread arguments
+typedef struct {
+    client_t *client_arg;
+    char *str_arg;
+    void (*function)(client_t *, const char *);
+} thread_args_t;
+
+// Wrapper function that unpacks arguments and calls the target function
+static void *thread_wrapper(void *data) {
+    thread_args_t *args = (thread_args_t *)data;
+    
+    // Call the actual function with the unpacked arguments
+    args->function(args->client_arg, args->str_arg);
+    
+    // Clean up
+    if (args->str_arg) {
+        free(args->str_arg);
+    }
+    free(args);
+    
+    return NULL;
+}
+
 /*
 ===============
 Sys_CreateThread
 
-Create a new thread of execution with a string argument
+Create a new thread of execution with client data and a string argument
 ===============
 */
-void Sys_CreateThread(void (*function)(const char *), const char *arg) {
+void Sys_CreateThread(void (*function)(client_t *, const char *), client_t *client, const char *arg) {
     // We need to duplicate the string argument to ensure it remains valid
     // for the duration of the thread
     char *arg_copy = NULL;
@@ -53,6 +76,20 @@ void Sys_CreateThread(void (*function)(const char *), const char *arg) {
         }
     }
     
+    // Create and populate the argument structure
+    thread_args_t *args = (thread_args_t *)malloc(sizeof(thread_args_t));
+    if (!args) {
+        if (arg_copy) {
+            free(arg_copy);
+        }
+        Com_Error(ERR_FATAL, "Sys_CreateThread: Failed to allocate memory for thread arguments");
+        return;
+    }
+    
+    args->client_arg = client;  // Pass client by reference
+    args->str_arg = arg_copy;
+    args->function = function;
+    
     pthread_t threadHandle;
     pthread_attr_t attr;
     int result;
@@ -64,14 +101,17 @@ void Sys_CreateThread(void (*function)(const char *), const char *arg) {
     
     result = pthread_create(&threadHandle, 
                            &attr, 
-                           (void *(*)(void *))function,
-                           arg_copy);
+                           thread_wrapper,
+                           args);
     
     pthread_attr_destroy(&attr);
     
     if (result != 0) {
-        if (arg_copy) {
-            free(arg_copy);
+        if (args) {
+            if (args->str_arg) {
+                free(args->str_arg);
+            }
+            free(args);
         }
         Com_Error(ERR_FATAL, "Sys_CreateThread: pthread_create failed with error %d", result);
     }
@@ -268,6 +308,20 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
         headers = curl_slist_append(headers, contentTypeHeader);
     }
     
+    // Log endpoint
+    Com_Printf("RS: Endpoint: %s\n", url);
+    
+    // Log headers
+    Com_Printf("RS: Headers:\n");
+    struct curl_slist *temp = headers;
+    while (temp) {
+        Com_Printf("  %s\n", temp->data);
+        temp = temp->next;
+    }
+    
+    // Log payload
+    Com_Printf("RS: Payload: %s\n", payload ? payload : "(none)");
+    
     // Set options
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -298,14 +352,12 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
     curl_global_cleanup();
     
     return response;
-};
+}
 
 
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-
-// Assuming you have a JSON parsing library like cJSON
 #include "cJSON.h"
 
 // Function to parse JSON response into apiResponse_t structure
@@ -374,7 +426,7 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
     client_t *targetClient;
 
     if (response->targetClientNum < -1) {
-        Com_DPrintf("%s", response->message);
+        Com_DPrintf("RS: %s", response->message);
         return;
     }
 
@@ -382,7 +434,7 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
         targetClient = &svs.clients[response->targetClientNum];
         strlen(targetClient->name) > 0 ? mentionPrefix = va("%s", targetClient->name) : "";
     }
-    
+
     if (response->message != NULL) {
         finalMessage = va("%s%s", mentionPrefix, response->message);
         RS_GameSendServerCommand(response->targetClientNum, va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));

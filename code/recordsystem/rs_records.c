@@ -149,7 +149,7 @@ RS_SendTime
 Sends a time record to the API server
 ===============
 */
-static void RS_SendTime(const char *cmdString) {
+static void RS_SendTime(client_t client, const char *cmdString) {
     apiResponse_t *response;
     char *jsonString;
     cJSON *json;
@@ -197,7 +197,7 @@ void RS_Gateway(const char *s) {
             client->awaitingDemoSave = qtrue;
             client->timerStopTime = svs.time;
             client->timerStopInfo = timeInfo;
-            Sys_CreateThread(RS_SendTime, s);
+            Sys_CreateThread(RS_SendTime, client, s);
         }
         else {
             RS_GameSendServerCommand(timeInfo->clientNum, "print \"^7You are not logged in^5.\n\"");

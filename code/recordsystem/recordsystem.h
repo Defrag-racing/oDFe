@@ -18,126 +18,27 @@ typedef struct {
     char uuid[UUID_LENGTH];
 } apiResponse_t;
 
-/*
-===============
-RS_Gateway
-
-Main entry point for record system events
-===============
-*/
-void RS_Gateway(const char *s);
-
-/*
-===============
-Sys_CreateThread
-
-Create a new thread of execution with a string argument
-===============
-*/
-void Sys_CreateThread(void (*function)(const char *), const char *arg);
-
-/*
-===============
-RS_GameSendServerCommand
-
-Wrapper for SV_SendServerCommand
-===============
-*/
-void RS_GameSendServerCommand(int clientNum, const char *text);
-
-/*
-===============
-RS_ExecuteClientCommand
-
-Routes commands to their appropriate handlers
-===============
-*/
-qboolean RS_ExecuteClientCommand(client_t *client, const char *s);
-
-/*
-===============
-RS_IsClientTimerStop
-
-Checks if a string represents a client timer stop event
-===============
-*/
-qboolean RS_IsClientTimerStop(const char *s);
-
-/*
-===============
-Memory structure for HTTP responses
-===============
-*/
 typedef struct {
     char *memory;
     size_t size;
 } MemoryStruct;
 
+void RS_Gateway(const char *s);
+void Sys_CreateThread(void (*function)(client_t *, const char *), client_t *client, const char *arg);
+void RS_GameSendServerCommand(int clientNum, const char *text);
+qboolean RS_ExecuteClientCommand(client_t *client, const char *s);
+qboolean RS_IsClientTimerStop(const char *s);
 char* formatTime(int ms);
-
-/*
-===============
-RS_HttpGet
-
-Performs an HTTP GET request to the specified URL
-Returns the response as a null-terminated string that must be freed by the caller
-Returns NULL if the request failed
-===============
-*/
 char* RS_HttpGet(const char *url);
-
-/*
-===============
-RS_HttpPost
-
-Performs an HTTP POST request to the specified URL with the given payload
-Returns the response as a null-terminated string that must be freed by the caller
-Returns NULL if the request failed
-===============
-*/
 char* RS_HttpPost(const char *url, const char *contentType, const char *payload);
-
-/*
-===============
-RS_UrlEncode
-
-Encodes a string for use in a URL
-The returned string must be freed by the caller
-===============
-*/
 char* RS_UrlEncode(const char *str);
-
 apiResponse_t* RS_ParseAPIResponse(const char* jsonString);
-
 void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient);
-
 void RS_StartRecord(client_t *client);
-
-
-/*
-====================
-SV_StopRecording
-
-stop recording a demo
-====================
-*/
 void RS_StopRecord(client_t *client);
-
-/*
-====================
-SV_WriteGamestate
-====================
-*/
 void RS_WriteGamestate( client_t *client);
-
-/*
-====================
-RS_WriteSnapshotToDemo
-====================
-*/
 void RS_WriteSnapshot(client_t *client);
 void RS_WriteDemoMessage(client_t *client, msg_t *msg);
-
 void RS_SaveDemo(client_t *client);
 
 #endif // __RECORDSYSTEM_H__
