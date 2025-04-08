@@ -149,7 +149,7 @@ RS_SendTime
 Sends a time record to the API server
 ===============
 */
-static void RS_SendTime(client_t client, const char *cmdString) {
+static void RS_SendTime(client_t *client, const char *cmdString) {
     apiResponse_t *response;
     char *jsonString;
     cJSON *json;
@@ -170,10 +170,11 @@ static void RS_SendTime(client_t client, const char *cmdString) {
     // Convert JSON object to string
     jsonString = cJSON_Print(json);
     cJSON_Delete(json); // Free the JSON object
-    
     Com_DPrintf("json payload: %s\n", jsonString);
 
     Com_sprintf(url, sizeof(url), "http://%s/api/records", "149.28.120.254:8000");
+
+
 
     // Make the HTTP request
     response = RS_ParseAPIResponse(RS_HttpPost(url, "application/json", jsonString));

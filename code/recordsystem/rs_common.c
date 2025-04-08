@@ -442,7 +442,7 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
 }
 
 char* formatTime(int ms) {
-    static char timeString[10]; // Increased to 10 to handle all characters + null
+    static char timeString[12]; // Increased buffer size to be safe
     
     int minutes = ms / 60000;
     ms %= 60000;
@@ -451,7 +451,7 @@ char* formatTime(int ms) {
     ms %= 1000;
     
     // Format as MM.SS.MMM (with leading zeros)
-    sprintf(timeString, "%02d.%02d.%03d", minutes, seconds, ms);
+    snprintf(timeString, sizeof(timeString), "%02d.%02d.%03d", minutes, seconds, ms);
     
     return timeString;
 }
