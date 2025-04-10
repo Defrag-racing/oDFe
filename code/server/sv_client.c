@@ -2059,20 +2059,6 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 				Cmd_Args_Sanitize( "\n\r;" ); // handle ';' for OSP
 			else
 				Cmd_Args_Sanitize( "\n\r" );
-			#ifdef ENABLE_RS
-			if ( Q_streq( Cmd_Argv(0), "team") && Q_streq( Cmd_Argv(1), "spectator") && Q_streq( Cmd_Argv(2), "\0")) {
-				cl->isSpectating = qtrue;
-				RS_StopRecord(cl);
-			}
-
-			if ( Q_streq( Cmd_Argv(0), "team") && Q_streq( Cmd_Argv(1), "free") && Q_streq( Cmd_Argv(2), "\0")) {
-				cl->isSpectating = qfalse;
-			}
-
-			if ( Q_streq( Cmd_Argv(0), "kill") && Q_streq( Cmd_Argv(1), "\0")) {
-				RS_StopRecord(cl);
-			}
-			#endif
 			
 			VM_Call( gvm, 1, GAME_CLIENT_COMMAND, cl - svs.clients );
 		}

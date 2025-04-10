@@ -687,6 +687,7 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 */
 void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
     // record information about the message
+
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.msgTime;
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = 0;
@@ -695,31 +696,8 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
     SV_Netchan_Transmit(client, msg);
 
 #ifdef ENABLE_RS
-	int frameMsec = 1000 / sv_fps->integer * com_timescale->value;
-	if (client->awaitingDemoSave)
-		if (svs.time - client->timerStopTime > 500*frameMsec)
-			RS_SaveDemo(client); // it's been max frames from timer stop
-
-    //If we're recording a demo for this client
-    if (client->isRecording) {
-        // If client is active and we're waiting to start recording
-        if (client->demoWaiting && client->state == CS_ACTIVE) {
-            client->demoWaiting = qfalse;
-    	}        
-        // Only record after initial gamestate and when client is active
-        if (!client->demoWaiting && client->state == CS_ACTIVE) {
-			if (isSnapshot) {
-            	RS_WriteSnapshot(client);
-			}
-        }
-    }
-
-	else {
-		if(!client->isSpectating) { 
-			RS_StartRecord(client);
-		}
-	}
-	
+	if (isSnapshot)
+		RS_DemoHandler(client);
 #endif
 }
 

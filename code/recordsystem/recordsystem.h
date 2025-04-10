@@ -38,7 +38,7 @@ void RS_StartRecord(client_t *client);
 void RS_StopRecord(client_t *client);
 void RS_WriteGamestate( client_t *client);
 void RS_WriteSnapshot(client_t *client);
-void RS_WriteDemoMessage(client_t *client, msg_t *msg);
 void RS_SaveDemo(client_t *client);
+void RS_DemoHandler(client_t *client);
 
 #endif // __RECORDSYSTEM_H__

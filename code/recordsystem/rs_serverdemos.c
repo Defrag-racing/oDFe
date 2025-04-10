@@ -43,7 +43,7 @@ void RS_StartRecord(client_t *client) {
     Q_strncpyz(client->demoName, demoName, sizeof(demoName));
     // Set client's demo flags
     client->isRecording = qtrue;
-    client->demoWaiting = qtrue;
+    // client->demoWaiting = qtrue;
 
 	// write out the gamestate message
 	RS_WriteGamestate( client );
@@ -115,7 +115,7 @@ void RS_SaveDemo(client_t *client) {
     client->awaitingDemoSave = qfalse;
     client->demoFile = FS_INVALID_HANDLE;
     client->isRecording = qfalse;
-    client->demoWaiting = qfalse;
+    // client->demoWaiting = qfalse;
     client->demoDeltaNum = 0;
 }
 
@@ -150,7 +150,7 @@ void RS_StopRecord(client_t *client) {
     }
 
     client->isRecording = qfalse;
-    client->demoWaiting = qfalse;
+    // client->demoWaiting = qfalse;
     client->demoDeltaNum = 0;
 }
 
@@ -433,35 +433,37 @@ static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
 }
 
-/*
-====================
-RS_WriteDemoMessage
-====================
-*/
-void RS_WriteDemoMessage(client_t *client, msg_t *msg) {
-    if (!client->isRecording) {
-        return;
-    }
-    
-    // Skip if waiting for first snapshot
-    if (client->demoWaiting) {
-        if (client->netchan.outgoingSequence > 0) {
-            client->demoWaiting = qfalse;
-        } else {
-            return;
+void RS_DemoHandler(client_t *client) {
+	clientSnapshot_t clFrame = client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+	int frameMsec = 1000 / sv_fps->integer * com_timescale->value;
+
+    // Client un-recordable
+    if (clFrame.ps.pm_type == PM_SPECTATOR || clFrame.ps.pm_type == PM_DEAD || clFrame.ps.pm_flags & PMF_FOLLOW) {
+        if (client->awaitingDemoSave) { // short-circuit, save demo.
+            RS_SaveDemo(client);
+        }
+
+        if (client->isRecording) {
+            RS_StopRecord(client);
         }
     }
-    
-    // Write the packet sequence
-    int len = client->netchan.outgoingSequence;
-    int swlen = LittleLong(len);
-    FS_Write(&swlen, 4, client->demoFile);
-    
-    // Write the message size
-    len = LittleLong(msg->cursize);
-    FS_Write(&len, 4, client->demoFile);
-    
-    // Write the message data
-    FS_Write(msg->data, msg->cursize, client->demoFile);
-}
 
+    // Player is recordable 
+    else {        
+        if (client->isRecording) { // Recording already
+            RS_WriteSnapshot(client);
+        }
+
+        else { // Start recording
+            if (client->state == CS_ACTIVE) {
+                RS_StartRecord(client);
+            }
+        }
+        
+        // Save demo?
+        if (client->awaitingDemoSave) {
+            if (svs.time - client->timerStopTime > 500*frameMsec) // Enough frames have passed from timer stop to stop recording
+                RS_SaveDemo(client);
+        }
+    }
+}
