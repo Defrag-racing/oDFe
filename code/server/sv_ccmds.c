@@ -158,11 +158,15 @@ static void SV_Map_f( void ) {
 	char		expanded[MAX_QPATH];
 	char		mapname[MAX_QPATH];
 	int			len;
+	int 		i;
 
 	map = Cmd_Argv(1);
 	if ( !map || !*map ) {
 		return;
 	}
+
+	for(i = 0; i < MAX_QPATH; i++)
+	expanded[i] = tolower(expanded[i]);
 
 	// make sure the level exists before trying to change, so that
 	// a typo at the server console won't end the game
