@@ -4818,6 +4818,7 @@ static void FS_Startup( void ) {
 
 	// Cyberstorm
 	if (fs_include->string[0]) {
+		Com_Printf( "----- NFS -----\n" );
 		FS_AddMapDirectory(fs_basepath->string, fs_include->string);
 	}
 	// !Cyberstorm
