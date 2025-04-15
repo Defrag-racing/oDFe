@@ -675,6 +675,8 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ )	{
 		frame->ents[ i ] = svs.currFrame->ents[ entityNumbers.snapshotEntities[ i ] ];
 	}
+
+	RS_MarkSnapshot(frame, client);
 }
 
 
@@ -685,7 +687,7 @@ SV_SendMessageToClient
 Called by SV_SendClientSnapshot and SV_SendClientGameState
 =======================
 */
-void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
+void SV_SendMessageToClient(msg_t *msg, client_t *client) {
     // record information about the message
 
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -694,11 +696,6 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
 
     // send the datagram
     SV_Netchan_Transmit(client, msg);
-
-#ifdef ENABLE_RS
-	if (isSnapshot)
-		RS_DemoHandler(client);
-#endif
 }
 
 
@@ -743,7 +740,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 		MSG_Clear( &msg );
 	}
 
-	SV_SendMessageToClient( &msg, client, qtrue );
+	SV_SendMessageToClient( &msg, client);
 }
 
 

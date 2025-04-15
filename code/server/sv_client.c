@@ -867,10 +867,6 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 		return;		// already dropped
 	}
 
-	#ifdef ENABLE_RS
-	RS_StopRecord(drop);
-	#endif
-
 	isBot = drop->netchan.remoteAddress.type == NA_BOT;
 
 	Q_strncpyz( name, drop->name, sizeof( name ) );	// for further DPrintf() because drop->name will be nuked in SV_SetUserinfo()
@@ -1131,8 +1127,12 @@ static void SV_SendClientGameState( client_t *client ) {
 		return;
 	}
 
+	int clientNum = client - svs.clients;
+	clientDemo_t *clientDemo = clientDemos[clientNum];
+	memcpy(clientDemo->gamestateMsg, &msg, sizeof(msg));
+	
 	// deliver this to the client
-	SV_SendMessageToClient( &msg, client, qfalse );
+	SV_SendMessageToClient( &msg, client);
 }
 
 
@@ -1176,7 +1176,7 @@ void SV_ClientEnterWorld( client_t *client ) {
 	// call the game begin function
 	VM_Call( gvm, 1, GAME_CLIENT_BEGIN, clientNum );
 	#ifdef ENABLE_RS
-	client->isRecording = qfalse;
+	client->recording = qtrue;
 	Com_DPrintf("-----here----\n");
 	Com_DPrintf("Logged: %i, Sequence: %i\n", client->loggedIn, client->reliableSequence);
 	// client->loggedIn = qfalse;

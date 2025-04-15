@@ -2141,6 +2141,20 @@ qboolean Info_ValidateKeyValue( const char *s )
 	}
 }
 
+qboolean Q_startsWith(const char *string, const char *prefix) {
+    if (!string || !prefix) {
+        return qfalse;
+    }
+    
+    size_t prefixLen = strlen(prefix);
+    size_t stringLen = strlen(string);
+    
+    if (prefixLen > stringLen) {
+        return qfalse;
+    }
+    
+    return (strncmp(string, prefix, prefixLen) == 0) ? qtrue : qfalse;
+}
 
 /*
 ==================
@@ -2162,6 +2176,11 @@ qboolean Info_SetValueForKey_s( char *s, int slen, const char *key, const char *
 
 	if ( !key || !Info_ValidateKeyValue( key ) || *key == '\0' ) {
 		Com_Printf( S_COLOR_YELLOW "Invalid key name: '%s'\n", key );
+		return qfalse;
+	}
+
+	if ( Q_startsWith(s, "ClientTimerStop") ) {
+		Com_Printf( S_COLOR_YELLOW "Info_SetValueForKey(%s): STOP TRYING DAT SHIT!!!\n", key );
 		return qfalse;
 	}
 

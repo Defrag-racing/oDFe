@@ -831,6 +831,7 @@ int		Q_stricmpn (const char *s1, const char *s2, int n);
 char	*Q_strlwr( char *s1 );
 char	*Q_strupr( char *s1 );
 const char	*Q_stristr( const char *s, const char *find);
+qboolean Q_startsWith(const char *string, const char *prefix);
 
 qboolean Q_isanumber( const char *s );
 qboolean Q_isintegral( float f );

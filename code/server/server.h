@@ -35,6 +35,22 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define	MAX_ENT_CLUSTERS	16
 #define	UUID_LENGTH		37
 
+
+typedef struct {
+    int clientNum;          // Entity/client number
+    int time;               // Timer time (in milliseconds)
+    char mapname[64];       // Map name
+    char name[36];          // Player's name
+    int gametype;           // Gametype
+    int promode;            // Promode enabled
+    int submode;            // Sub-mode
+    int interferenceOff;    // Interference off flag
+    int obEnabled;          // Out of bounds enabled
+    int version;            // Version number
+    char date[16];          // Date string (YYYY-MM-DD)
+} timeInfo_t;
+
+
 typedef struct svEntity_s {
 	struct worldSector_s *worldSector;
 	struct svEntity_s *nextEntityInWorldSector;
@@ -110,7 +126,12 @@ typedef struct {
 
 	int				frameNum;			// from snapshot storage to compare with last valid
 	entityState_t	*ents[ MAX_SNAPSHOT_ENTITIES ];
-
+#ifdef ENABLE_RS
+	qboolean 		clientDemoStart; // whether this frame marks the start of a client demo
+	qboolean 		clientDemoEnd; // whether this marks the end of a client demo
+	qboolean 		serverDemoSave; // whether this frame marks save of a server demo
+	timeInfo_t		timeInfo;
+#endif
 } clientSnapshot_t;
 
 typedef enum {
@@ -157,20 +178,6 @@ typedef enum {
 	GSA_SENT_MANY,	// gamestate sent many times, client must reply with exact gamestateMessageNum == gamestateMessageNum and correct serverId
 	GSA_ACKED		// gamestate acknowledged, no retansmissions needed
 } gameStateAck_t;
-
-typedef struct {
-    int clientNum;          // Entity/client number
-    int time;               // Timer time (in milliseconds)
-    char mapname[64];       // Map name
-    char name[36];          // Player's name
-    int gametype;           // Gametype
-    int promode;            // Promode enabled
-    int submode;            // Sub-mode
-    int interferenceOff;    // Interference off flag
-    int obEnabled;          // Out of bounds enabled
-    int version;            // Version number
-    char date[16];          // Date string (YYYY-MM-DD)
-} timeInfo_t;
 
 typedef struct client_s {
 	clientState_t	state;
@@ -247,23 +254,15 @@ typedef struct client_s {
 
 #ifdef ENABLE_RS
 	qboolean		loggedIn;
-	qboolean 		demoWaiting;
+	qboolean 		awaitingDemoStart;
 	qboolean 		awaitingLogin;
 	qboolean		awaitingLogout;
-	qboolean		isRecording;
-	qboolean		isSpectating;
+	qboolean		recording;
 	qboolean		awaitingDemoSave;
 	int 			timerStopTime;
-	timeInfo_t		*timerStopInfo;
+	timeInfo_t		*timeInfo;
 	char			uuid[UUID_LENGTH];
 	char			displayName[MAX_NAME_LENGTH];
-	fileHandle_t	demoFile;
-	char			demoName[MAX_OSPATH];
-
-	int				eventMask;
-	int				demoCommandSequence;
-	int				demoDeltaNum;
-	int				demoMessageSequence;
 #endif
 } client_t;
 
@@ -425,7 +424,7 @@ client_t *SV_GetPlayerByHandle( void );
 void SV_AddServerCommand( client_t *client, const char *cmd );
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg );
 void SV_WriteFrameToClient( client_t *client, msg_t *msg );
-void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot);
+void SV_SendMessageToClient(msg_t *msg, client_t *client);
 void SV_SendClientMessages( void );
 void SV_SendClientSnapshot( client_t *client );
 

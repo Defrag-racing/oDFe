@@ -1,265 +1,10 @@
 #include "../server/server.h"
 
-// Static storage for delta compression
-static clientSnapshot_t saved_snap;
-static entityState_t saved_entity_states[MAX_SNAPSHOT_ENTITIES];
-static entityState_t *saved_ents[MAX_SNAPSHOT_ENTITIES];
 
 static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg );
 
+RS_WriteMessageToDemo(clientDemo_t *demo) {
 
-/*
-====================
-RS_StartRecord
-
-Begins recording a demo for a given client
-====================
-*/
-void RS_StartRecord(client_t *client) {
-    char demoName[MAX_OSPATH];
-    int clientNum = client - svs.clients;
-
-    if (client->state != CS_ACTIVE) {
-        return;
-    }
-
-    if (client->isRecording) {
-        Com_Printf("Already recording client %i\n", clientNum);
-        return;
-    }
-
-    // Create demo name
-    Q_strncpyz(demoName, va("demos/[%d].dm_68", clientNum), sizeof(demoName));
-
-    Com_Printf("recording to %s.\n", demoName);
-
-    // Start writing to demo file
-    client->demoFile = FS_FOpenFileWrite(demoName);
-    if (client->demoFile == FS_INVALID_HANDLE) {
-        Com_Printf("ERROR: couldn't open file: %s.\n", demoName);
-        return;
-    }
-
-    Q_strncpyz(client->demoName, demoName, sizeof(demoName));
-    // Set client's demo flags
-    client->isRecording = qtrue;
-    // client->demoWaiting = qtrue;
-
-	// write out the gamestate message
-	RS_WriteGamestate( client );
-}
-
-/*
-====================
-RS_StopRecord
-
-stop recording a demo
-====================
-*/
-void RS_SaveDemo(client_t *client) {
-    int clientNum = client - svs.clients;
-    char finalName[MAX_OSPATH];
-    timeInfo_t *timeInfo = client->timerStopInfo;
-
-    if (!client->isRecording) {
-        Com_Printf("Client %i is not being recorded\n", clientNum);
-        return;
-    }
-
-    if (client->demoFile != FS_INVALID_HANDLE) {
-        int len;
-
-        // Write proper EOF markers - TWO -1 values
-        len = -1;
-        FS_Write(&len, 4, client->demoFile);
-        FS_Write(&len, 4, client->demoFile);
-        
-        FS_FCloseFile(client->demoFile);
-        client->demoFile = FS_INVALID_HANDLE;
-        Com_Printf("Stopped recording client %i\n", clientNum);
-    }
-
-    if (timeInfo->gametype == 1) { // run mode
-        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s]%s[%s][%s].dm_68", \
-        timeInfo->mapname, \
-        timeInfo->promode ? "cpm" : "vq3", \
-        formatTime(timeInfo->time), \
-        client->displayName, \
-        client->uuid);
-    }
-    else {
-        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s.%i]%s[%s][%s].dm_68", \
-        timeInfo->mapname, \
-        timeInfo->promode ? "cpm" : "vq3", \
-        timeInfo->submode, \
-        formatTime(timeInfo->time), \
-        client->displayName, \
-        client->uuid);
-    }
-
-    if (client->demoFile != FS_INVALID_HANDLE) {
-        int len;
-
-        // Write proper EOF markers - TWO -1 values
-        len = -1;
-        FS_Write(&len, 4, client->demoFile);
-        FS_Write(&len, 4, client->demoFile);
-        
-        FS_FCloseFile(client->demoFile);
-        client->demoFile = FS_INVALID_HANDLE;
-        Com_Printf("Stopped recording client %i\n", clientNum);
-    }
-
-    FS_Rename( client->demoName, finalName );
-    Com_Printf("Saved demo: %s\n", finalName);
-    client->awaitingDemoSave = qfalse;
-    client->demoFile = FS_INVALID_HANDLE;
-    client->isRecording = qfalse;
-    // client->demoWaiting = qfalse;
-    client->demoDeltaNum = 0;
-}
-
-/*
-====================
-RS_StopRecord
-
-stop recording a demo
-====================
-*/
-void RS_StopRecord(client_t *client) {
-    if (client->awaitingDemoSave)
-        return RS_SaveDemo(client);
-    int clientNum = client - svs.clients;
-
-    if (!client->isRecording) {
-        Com_Printf("Client %i is not being recorded\n", clientNum);
-        return;
-    }
-
-    if (client->demoFile != FS_INVALID_HANDLE) {
-        int len;
-
-        // Write proper EOF markers - TWO -1 values
-        len = -1;
-        FS_Write(&len, 4, client->demoFile);
-        FS_Write(&len, 4, client->demoFile);
-        
-        FS_FCloseFile(client->demoFile);
-        client->demoFile = FS_INVALID_HANDLE;
-        Com_Printf("Stopped recording client %i\n", clientNum);
-    }
-
-    client->isRecording = qfalse;
-    // client->demoWaiting = qfalse;
-    client->demoDeltaNum = 0;
-}
-
-/*
-====================
-RS_WriteGamestate
-====================
-*/
-void RS_WriteGamestate(client_t *client) {
-	int			start;
-	entityState_t nullstate;
-	const svEntity_t *svEnt;
-	msg_t		msg;
-	byte		msgBuffer[ MAX_MSGLEN_BUF ];
-    int len;
-    // entityState_t *ent;
-    // entityState_t nullstate;
-
-	// accept usercmds starting from current server time only
-	// Com_Memset( &client->lastUsercmd, 0x0, sizeof( client->lastUsercmd ) );
-	// client->lastUsercmd.serverTime = sv.time - 1;
-
-	MSG_Init( &msg, msgBuffer, MAX_MSGLEN );
-
-	// NOTE, MRE: all server->client messages now acknowledge
-	// let the client know which reliable clientCommands we have received
-	MSG_WriteLong( &msg, client->lastClientCommand );
-
-    client->demoMessageSequence = 1;
-	// send any server commands waiting to be sent first.
-	// we have to do this cause we send the client->reliableSequence
-	// with a gamestate and it sets the clc.serverCommandSequence at
-	// the client side
-	SV_UpdateServerCommandsToClient( client, &msg );
-
-	// send the gamestate
-	MSG_WriteByte( &msg, svc_gamestate );
-	MSG_WriteLong( &msg, client->reliableSequence );
-
-	// write the configstrings
-	for ( start = 0 ; start < MAX_CONFIGSTRINGS ; start++ ) {
-		if ( *sv.configstrings[ start ] != '\0' ) {
-			MSG_WriteByte( &msg, svc_configstring );
-			MSG_WriteShort( &msg, start );
-			if ( start == CS_SYSTEMINFO && sv.pure != sv_pure->integer ) {
-				// make sure we send latched sv.pure, not forced cvar value
-				char systemInfo[BIG_INFO_STRING];
-				Q_strncpyz( systemInfo, sv.configstrings[ start ], sizeof( systemInfo ) );
-				Info_SetValueForKey_s( systemInfo, sizeof( systemInfo ), "sv_pure", va( "%i", sv.pure ) );
-				MSG_WriteBigString( &msg, systemInfo );
-			} else {
-				MSG_WriteBigString( &msg, sv.configstrings[start] );
-			}
-		}
-	}
-
-	// write the baselines
-	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
-	for ( start = 0 ; start < MAX_GENTITIES; start++ ) {
-		if ( !sv.baselineUsed[ start ] ) {
-			continue;
-		}
-		svEnt = &sv.svEntities[ start ];
-		MSG_WriteByte( &msg, svc_baseline );
-		MSG_WriteDeltaEntity( &msg, &nullstate, &svEnt->baseline, qtrue );
-	}
-
-	MSG_WriteByte( &msg, svc_EOF );
-
-	MSG_WriteLong( &msg, client - svs.clients );
-
-	// write the checksum feed
-	MSG_WriteLong( &msg, sv.checksumFeed );
-
-	// it is important to handle gamestate overflow
-	// but at this stage client can't process any reliable commands
-	// so at least try to inform him in console and release connection slot
-	// if ( msg.overflowed ) {
-	// 	if ( client->netchan.remoteAddress.type == NA_LOOPBACK ) {
-	// 		Com_Error( ERR_DROP, "gamestate overflow" );
-	// 	} else {
-	// 		NET_OutOfBandPrint( NS_SERVER, &client->netchan.remoteAddress, "print\n" S_COLOR_RED "SERVER ERROR: gamestate overflow\n" );
-	// 		SV_DropClient( client, "gamestate overflow" );
-	// 	}
-	// 	return;
-	// }
-
-    // Finalize message
-    MSG_WriteByte(&msg, svc_EOF);
-
-    // Write the client num - use actual client number
-    MSG_WriteLong(&msg, client - svs.clients);
-
-    // Write the checksum feed
-    MSG_WriteLong(&msg, sv.checksumFeed);
-
-    // End message
-    MSG_WriteByte(&msg, svc_EOF);
-
-    // Write to demo file
-    // Sequence should be properly set to match client expectation
-    len = LittleLong(0);  // Gamestate uses sequence 0
-    FS_Write(&len, 4, client->demoFile);
-
-    len = LittleLong(msg.cursize);
-
-    FS_Write(&len, 4, client->demoFile);
-
-    FS_Write(msg.data, msg.cursize, client->demoFile);
 }
 
 /*
@@ -293,55 +38,62 @@ static void RS_WriteServerCommands(msg_t *msg, client_t *client) {
 RS_WriteSnapshot
 ====================
 */
-void RS_WriteSnapshot(client_t *client) {
+static void RS_WriteSnapshot(clientDemo_t *demo) {
+    client_t* client = &svs.clients[demo->clientNum];
+    clientSnapshot_t saved_snap;
+    entityState_t saved_entity_states[MAX_SNAPSHOT_ENTITIES];
+    entityState_t *saved_ents[MAX_SNAPSHOT_ENTITIES];
+    clientSnapshot_t *frame = demo->currSnap;
+
+
     byte bufData[MAX_MSGLEN_BUF];
     msg_t msg;
     int i, len;
     
     // Get current snapshot
-    clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
-    // Com_DPrintf("Writing snapshot to client: %i\n", frame->frameNum);
+    // clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+    // RS_Log("", "DEBUG");
     
     // Initialize message buffer
     MSG_Init(&msg, bufData, sizeof(bufData));
     MSG_Bitstream(&msg);
     
     // Write reliable sequence
-    MSG_WriteLong(&msg, client->reliableSequence);
+    MSG_WriteLong(&msg, frame->reliableSequence);
     
     // Write server commands
     RS_WriteServerCommands(&msg, client);
     
     // Write snapshot header
     MSG_WriteByte(&msg, svc_snapshot);
-    MSG_WriteLong(&msg, sv.time);  // Server time
-    MSG_WriteByte(&msg, client->demoDeltaNum);  // 0 = no delta, 1 = delta
+    MSG_WriteLong(&msg, frame->time);  // Server time
+    MSG_WriteByte(&msg, demo->deltaNum);  // 0 = no delta, 1 = delta
     MSG_WriteByte(&msg, 0);  // Snap flags
     
     // Write area info
     MSG_WriteByte(&msg, frame->areabytes);
     MSG_WriteData(&msg, frame->areabits, frame->areabytes);
     
-    // Delta compress player state
-    if (client->demoDeltaNum == 0) {
+    // Delta compress player state ?
+    if (!demo->deltaNum) {
         // First snapshot: no delta
         MSG_WriteDeltaPlayerstate(&msg, NULL, &frame->ps);
     } else {
         // Using previous snapshot for delta
-        MSG_WriteDeltaPlayerstate(&msg, &saved_snap.ps, &frame->ps);
+        MSG_WriteDeltaPlayerstate(&msg, &demo->prevSnap, &frame->ps);
     }
 
-    RS_EmitPacketEntities(&saved_snap, frame, &msg);
+    RS_EmitPacketEntities(demo->prevSnap, frame, &msg);
     // Finalize message
     MSG_WriteByte(&msg, svc_EOF);
     
     // Write to demo file
-    len = LittleLong(client->demoMessageSequence);
-    FS_Write(&len, 4, client->demoFile);
+    len = LittleLong(frame->frameNum);
+    FS_Write(&len, 4, demo->file);
     
     len = LittleLong(msg.cursize);
-    FS_Write(&len, 4, client->demoFile);
-    FS_Write(msg.data, msg.cursize, client->demoFile);
+    FS_Write(&len, 4, demo->file);
+    FS_Write(msg.data, msg.cursize, demo->file);
     
     // Save this snapshot for delta compression of next snapshot
     // Create deep copies of entity pointers for delta compression
@@ -354,7 +106,7 @@ void RS_WriteSnapshot(client_t *client) {
             saved_ents[i] = NULL;
         }
     }
-    
+
     // Copy the frame structure
     saved_snap = *frame;
     
@@ -363,9 +115,10 @@ void RS_WriteSnapshot(client_t *client) {
         saved_snap.ents[i] = saved_ents[i];
     }
     
+    demo->prevSnap = saved_snap;
     // Update tracking variables
-    client->demoMessageSequence++;
-    client->demoDeltaNum = 1;  // All future snapshots use delta
+    demo->currSeq++;
+    demo->deltaNum = 1;  // All future snapshots use delta
 }
 
 /*
@@ -433,37 +186,384 @@ static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
 }
 
-void RS_DemoHandler(client_t *client) {
-	clientSnapshot_t clFrame = client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+void RS_MarkSnapshot(clientSnapshot_t *clFrame, client_t *client) {
 	int frameMsec = 1000 / sv_fps->integer * com_timescale->value;
 
-    // Client un-recordable
-    if (clFrame.ps.pm_type == PM_SPECTATOR || clFrame.ps.pm_type == PM_DEAD || clFrame.ps.pm_flags & PMF_FOLLOW) {
+    // Client is un-recordable
+    if (clFrame->ps.pm_type == PM_SPECTATOR || clFrame->ps.pm_type == PM_DEAD || clFrame->ps.pm_flags & PMF_FOLLOW) {
         if (client->awaitingDemoSave) { // short-circuit, save demo.
-            RS_SaveDemo(client);
+            clFrame->serverDemoSave = qtrue;
+            clFrame->timeInfo = client->timeInfo;
+            client->awaitingDemoSave = qfalse;
         }
-
-        if (client->isRecording) {
-            RS_StopRecord(client);
+        
+        if (client->recording) {
+            clFrame->clientDemoEnd = qtrue; // Mark end of a client demo
+            client->recording = qfalse;
         }
     }
 
-    // Player is recordable 
+    // Client is recordable 
     else {        
-        if (client->isRecording) { // Recording already
-            RS_WriteSnapshot(client);
+        if (!client->awaitingDemoStart && client->state == CS_ACTIVE) {
+            clFrame->clientDemoStart = qtrue; // Mark start of a demo
+            // Add data needed for gamestate
+            clFrame->last =
+            client->awaitingDemoStart = qfalse; // Stop waiting for demo start
         }
 
-        else { // Start recording
-            if (client->state == CS_ACTIVE) {
-                RS_StartRecord(client);
-            }
-        }
-        
         // Save demo?
         if (client->awaitingDemoSave) {
             if (svs.time - client->timerStopTime > 500*frameMsec) // Enough frames have passed from timer stop to stop recording
-                RS_SaveDemo(client);
+                clFrame->serverDemoSave = qtrue; // Mark frame to a save
+                clFrame->timeInfo = client->timeInfo; // Add timer info for demo thread
+                client->awaitingDemoSave = qfalse; // Stop waiting for demo save
         }
     }
+}
+
+/*
+====================
+RS_StartClientDemo
+
+Begins recording a demo for a given client
+====================
+*/
+static qboolean RS_StartClientDemo(clientDemo_t *demo) {
+    char *demoName;
+    client_t* client = &svs.clients[demo->clientNum];
+
+    Q_strncpyz(demoName, va("demos/[%d].dm_68", demo->clientNum), sizeof(demoName));
+    
+    Com_Printf("recording to %s.\n", demoName);
+
+    // Start writing to demo file
+    demo->file = FS_FOpenFileWrite(demoName);
+    if (demo->file == FS_INVALID_HANDLE) {
+        Com_Printf("ERROR: couldn't open file: %s.\n", demoName);
+        return qfalse;
+    }
+
+    Q_strncpyz(client->demoName, demoName, sizeof(demoName));
+
+	// write out the gamestate message
+    FS_Write(demo->gamestateMsg, demo->gamestateMsg.cursize, demo->file);
+    demo->deltaNum = 0; // don't use delta for first snapshot
+    demo->isActive = qtrue;
+    return qtrue;
+}
+
+/*
+====================
+RS_SaveServerDemo
+
+Save a server demo
+====================
+*/
+
+static qboolean RS_SaveServerDemo(clientDemo_t *demo, timeInfo_t *timeInfo) {
+    char finalName[MAX_OSPATH];
+    client_t* client = &svs.clients[demo->clientNum];
+    
+    if (!demo->isActive) {
+        Com_Printf("Attempted a save for an inactive client demo. Client %i is not being recorded\n", demo->clientNum);
+        return qfalse;
+    }
+
+    if (demo->file != FS_INVALID_HANDLE) {
+        int len = -1;
+
+        FS_Write(&len, 4, demo->file);
+        FS_Write(&len, 4, demo->file);
+        
+        FS_FCloseFile(demo->file);
+        demo->file = FS_INVALID_HANDLE;
+        Com_Printf("Stopped recording client %i\n", demo->clientNum);
+    }
+
+    if (timeInfo->gametype == 1) { // run mode
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s]%s[%s][%s].dm_68", \
+        timeInfo->mapname, \
+        timeInfo->promode ? "cpm" : "vq3", \
+        formatTime(timeInfo->time), \
+        client->displayName, \
+        client->uuid);
+    }
+    else {
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s.%i]%s[%s][%s].dm_68", \
+        timeInfo->mapname, \
+        timeInfo->promode ? "cpm" : "vq3", \
+        timeInfo->submode, \
+        formatTime(timeInfo->time), \
+        client->displayName, \
+        client->uuid);
+    }
+
+    if (demo->file != FS_INVALID_HANDLE) {
+        int len = -1;
+
+        FS_Write(&len, 4, demo->file);
+        FS_Write(&len, 4, demo->file);
+        
+        FS_FCloseFile(demo->file);
+        demo->file = FS_INVALID_HANDLE;
+        Com_Printf("RS_INFO: Stopped recording client %i\n", demo->clientNum);
+    }
+
+    FS_Rename( client->demoName, finalName );
+    Com_Printf("RS_INFO: Saved demo: %s\n", finalName);
+    demo->file = FS_INVALID_HANDLE;
+    demo->isActive = qfalse;
+    demo->deltaNum = 0;
+    return qtrue;
+}
+
+/*
+====================
+RS_StopClientDemo
+
+stop recording a client demo
+====================
+*/
+static qboolean RS_StopClientDemo(clientDemo_t *demo) {
+    client_t *client = &svs.clients[demo->clientNum];
+
+    if (!demo->isActive) {
+        Com_Printf("RS_WARNING: Attempted stop of inactive client demo for client %i.\n", demo->clientNum);
+        return qfalse;
+    }
+
+    if (demo->file != FS_INVALID_HANDLE) {
+        int len;
+
+        // Write proper EOF markers - TWO -1 values
+        len = -1;
+        FS_Write(&len, 4, demo->file);
+        FS_Write(&len, 4, demo->file);
+        
+        FS_FCloseFile(demo->file);
+        demo->file = FS_INVALID_HANDLE;
+        Com_Printf("RS_INFO: Stopped recording client %i\n", demo->clientNum);
+    }
+
+    client->isRecording = qfalse;
+    // client->demoWaiting = qfalse;
+    client->demoDeltaNum = 0;
+    return qtrue;
+}
+
+void* RS_DemoWriterThread() {
+    int currSeq;
+    int lastWrittenSeq;
+
+    // TODO: Add CVAR:
+    // while (!sv.serverdemos) {
+    while (qtrue) {
+        for (int i = 0; i < sv_maxclients->integer; i++) {
+            client_t *client = &svs.clients[i];
+            clientDemo_t *clientdemo = &clientDemos[i];
+            
+            // Activate demo if the client is active
+            if (!clientdemo->isActive && client->state == CS_ACTIVE) {
+                RS_StartClientDemo(clientdemo);
+                clientdemo->isActive = qtrue;
+            }
+            
+            // Client demo not active, skip to the next client demo
+            if (!clientdemo->isActive) {
+                continue;
+            }
+
+            if (clientdemo->lastWrittenSeq) {
+                currSeq = clientdemo->lastWrittenSeq + 1;
+            }
+            else {
+                currSeq = clientdemo->startSeq;
+                lastWrittenSeq = clientdemo->startSeq;
+            }
+            
+            const clientSnapshot_t *snapshot;
+            memcpy(&client->currSnap, client->frames[currSeq & PACKET_MASK], sizeof(clientSnapshot_t));
+            
+            if (snapshot->clientDemoStart) {
+                RS_StartClientDemo(clientdemo);
+            }
+            else if (snapshot->clientDemoEnd) {
+                RS_StopClientDemo(clientdemo);
+            }
+            else if (snapshot->serverDemoSave) {
+                RS_SaveServerDemo(clientdemo, snapshot->timeInfo);
+            }
+            else
+                RS_WriteSnapshot(clientdemo);
+
+            free(snapshot);
+        }
+    }
+}
+
+
+/*
+====================
+CL_WriteServerCommands
+====================
+*/
+static void CL_WriteServerCommands( msg_t *msg ) {
+	int i;
+
+	if ( clc.serverCommandSequence - clc.demoCommandSequence > 0 ) {
+
+		// do not write more than MAX_RELIABLE_COMMANDS
+		if ( clc.serverCommandSequence - clc.demoCommandSequence > MAX_RELIABLE_COMMANDS ) {
+			clc.demoCommandSequence = clc.serverCommandSequence - MAX_RELIABLE_COMMANDS;
+		}
+
+		for ( i = clc.demoCommandSequence + 1 ; i <= clc.serverCommandSequence; i++ ) {
+			MSG_WriteByte( msg, svc_serverCommand );
+			MSG_WriteLong( msg, i );
+			MSG_WriteString( msg, clc.serverCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );
+		}
+	}
+
+	clc.demoCommandSequence = clc.serverCommandSequence;
+}
+
+
+/*
+=============
+CL_EmitPacketEntities
+=============
+*/
+static void CL_EmitPacketEntities( clSnapshot_t *from, clSnapshot_t *to, msg_t *msg, entityState_t *oldents ) {
+	entityState_t	*oldent, *newent;
+	int		oldindex, newindex;
+	int		oldnum, newnum;
+	int		from_num_entities;
+
+	// generate the delta update
+	if ( !from ) {
+		from_num_entities = 0;
+	} else {
+		from_num_entities = from->numEntities;
+	}
+
+	newent = NULL;
+	oldent = NULL;
+	newindex = 0;
+	oldindex = 0;
+	while ( newindex < to->numEntities || oldindex < from_num_entities ) {
+		if ( newindex >= to->numEntities ) {
+			newnum = MAX_GENTITIES+1;
+		} else {
+			newent = &cl.parseEntities[(to->parseEntitiesNum + newindex) % MAX_PARSE_ENTITIES];
+			newnum = newent->number;
+		}
+
+		if ( oldindex >= from_num_entities ) {
+			oldnum = MAX_GENTITIES+1;
+		} else {
+			//oldent = &cl.parseEntities[(from->parseEntitiesNum + oldindex) % MAX_PARSE_ENTITIES];
+			oldent = &oldents[ oldindex ];
+			oldnum = oldent->number;
+		}
+
+		if ( newnum == oldnum ) {
+			// delta update from old position
+			// because the force parm is qfalse, this will not result
+			// in any bytes being emitted if the entity has not changed at all
+			MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );
+			oldindex++;
+			newindex++;
+			continue;
+		}
+
+		if ( newnum < oldnum ) {
+			// this is a new entity, send it from the baseline
+			MSG_WriteDeltaEntity (msg, &cl.entityBaselines[newnum], newent, qtrue );
+			newindex++;
+			continue;
+		}
+
+		if ( newnum > oldnum ) {
+			// the old entity isn't present in the new message
+			MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
+			oldindex++;
+			continue;
+		}
+	}
+
+	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
+}
+
+
+/*
+====================
+CL_WriteSnapshot
+====================
+*/
+static void CL_WriteSnapshot( void ) {
+
+	static	clSnapshot_t saved_snap;
+	static entityState_t saved_ents[ MAX_SNAPSHOT_ENTITIES ];
+
+	clSnapshot_t *snap, *oldSnap;
+	byte	bufData[ MAX_MSGLEN_BUF ];
+	msg_t	msg;
+	int		i, len;
+
+	snap = &cl.snapshots[ cl.snap.messageNum & PACKET_MASK ]; // current snapshot
+	//if ( !snap->valid ) // should never happen?
+	//	return;
+
+	if ( clc.demoDeltaNum == 0 ) {
+		oldSnap = NULL;
+	} else {
+		oldSnap = demo->prevSnap;
+	}
+
+	MSG_Init( &msg, bufData, MAX_MSGLEN );
+	MSG_Bitstream( &msg );
+
+	// NOTE, MRE: all server->client messages now acknowledge
+	MSG_WriteLong( &msg, clc.reliableSequence );
+
+	// Write all pending server commands
+	CL_WriteServerCommands( &msg );
+
+	MSG_WriteByte( &msg, svc_snapshot );
+	MSG_WriteLong( &msg, snap->serverTime ); // sv.time
+	MSG_WriteByte( &msg, clc.demoDeltaNum ); // 0 or 1
+	MSG_WriteByte( &msg, snap->snapFlags );  // snapFlags
+	MSG_WriteByte( &msg, snap->areabytes );  // areabytes
+	MSG_WriteData( &msg, snap->areamask, snap->areabytes );
+	if ( oldSnap )
+		MSG_WriteDeltaPlayerstate( &msg, &oldSnap->ps, &snap->ps );
+	else
+		MSG_WriteDeltaPlayerstate( &msg, NULL, &snap->ps );
+
+	CL_EmitPacketEntities( oldSnap, snap, &msg, saved_ents );
+
+	// finished writing the client packet
+	MSG_WriteByte( &msg, svc_EOF );
+
+	// write it to the demo file
+	if ( clc.demoplaying )
+		len = LittleLong( clc.demoMessageSequence );
+	else
+		len = LittleLong( clc.serverMessageSequence );
+	FS_Write( &len, 4, clc.recordfile );
+
+	len = LittleLong( msg.cursize );
+	FS_Write( &len, 4, clc.recordfile );
+	FS_Write( msg.data, msg.cursize, clc.recordfile );
+
+	// save last sent state so if there any need - we can skip any further incoming messages
+	for ( i = 0; i < snap->numEntities; i++ )
+		saved_ents[ i ] = cl.parseEntities[ (snap->parseEntitiesNum + i) % MAX_PARSE_ENTITIES ];
+
+	saved_snap = *snap;
+	saved_snap.parseEntitiesNum = 0;
+
+	clc.demoMessageSequence++;
+	clc.demoDeltaNum = 1;
 }

@@ -459,3 +459,7 @@ char* formatTime(int ms) {
 //     char stats[MAX_STATS];
 //     stats = client->ps.stats;
 // }
+
+void RS_Log(char* line, char *level) {
+    return Com_DPrintf("%s: %s\n", level, line);
+}

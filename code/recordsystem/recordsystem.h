@@ -11,6 +11,25 @@ qboolean startsWith(const char *string, const char *prefix);
 qboolean endsWith(const char *string, const char *suffix);
 
 typedef struct {
+    int clientNum;
+    int startSeq; // snapshot sequence
+    int lastWrittenSeq;
+    int currSeq;
+    int deltaNum;
+    clientSnapshot_t currSnap;
+    clientSnapshot_t prevSnap;
+    msg_t *gamestateMsg;
+    qboolean isActive;
+    fileHandle_t file;
+    pthread_mutex_t mutex;
+	int				eventMask;
+	int				demoCommandSequence;
+	int				demoMessageSequence;
+} clientDemo_t;
+
+clientDemo_t *clientDemos[MAX_CLIENTS];
+
+typedef struct {
     int success;
     int targetClientNum;
     char *message;
@@ -34,11 +53,7 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
 char* RS_UrlEncode(const char *str);
 apiResponse_t* RS_ParseAPIResponse(const char* jsonString);
 void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient);
-void RS_StartRecord(client_t *client);
-void RS_StopRecord(client_t *client);
-void RS_WriteGamestate( client_t *client);
-void RS_WriteSnapshot(client_t *client);
-void RS_SaveDemo(client_t *client);
-void RS_DemoHandler(client_t *client);
+void RS_MarkSnapshot(clientSnapshot_t *clFrame, client_t *client);
+void RS_Log(char* line, char *level);
 
 #endif // __RECORDSYSTEM_H__
