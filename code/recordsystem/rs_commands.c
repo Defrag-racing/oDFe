@@ -130,13 +130,13 @@ static void RS_Logout(client_t *client, const char *str) {
     int clientNum = client - svs.clients;
 
     if (client->loggedIn == qfalse) {
-        RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7You are not logged in^5.\n\"", client->name));
+        RS_GameSendServerCommand(clientNum, RS_va("print \"%s^5, ^7You are not logged in^5.\n\"", client->name));
         return;
     }
     client->loggedIn = qfalse; // Log them out locally, don't wait for server.
     strcpy(client->uuid, "");
     strcpy(client->displayName, "");
-    RS_GameSendServerCommand(clientNum, va("print \"%s^5, ^7You are now logged out^5.\n\"", client->name));
+    RS_GameSendServerCommand(clientNum, RS_va("print \"%s^5, ^7You are now logged out^5.\n\"", client->name));
 }
 
 typedef struct {

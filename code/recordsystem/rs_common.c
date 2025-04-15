@@ -432,12 +432,12 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
 
     if (mentionClient && response->targetClientNum >= 0) {
         targetClient = &svs.clients[response->targetClientNum];
-        strlen(targetClient->name) > 0 ? mentionPrefix = va("%s", targetClient->name) : "";
+        strlen(targetClient->name) > 0 ? mentionPrefix = RS_va("%s", targetClient->name) : "";
     }
 
     if (response->message != NULL) {
-        finalMessage = va("%s%s", mentionPrefix, response->message);
-        RS_GameSendServerCommand(response->targetClientNum, va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
+        finalMessage = RS_va("%s%s", mentionPrefix, response->message);
+        RS_GameSendServerCommand(response->targetClientNum, RS_va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
     }
 }
 
@@ -455,7 +455,18 @@ char* formatTime(int ms) {
     return timeString;
 }
 
-// dfState_t RS_GetDFState(client_t *client) {
-//     char stats[MAX_STATS];
-//     stats = client->ps.stats;
-// }
+// Thread-safe va
+const char *RS_va(const char *format, ...) {
+    _Thread_local static int index = 0;
+    _Thread_local static char string[2][32000];
+    
+    char *buf = string[index];
+    index ^= 1;
+    
+    va_list argptr;
+    va_start(argptr, format);
+    vsprintf(buf, format, argptr);
+    va_end(argptr);
+    
+    return buf;
+}

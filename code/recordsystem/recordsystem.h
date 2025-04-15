@@ -40,5 +40,6 @@ void RS_WriteGamestate( client_t *client);
 void RS_WriteSnapshot(client_t *client);
 void RS_SaveDemo(client_t *client);
 void RS_DemoHandler(client_t *client);
+const char *RS_va(const char *format, ...);
 
 #endif // __RECORDSYSTEM_H__
