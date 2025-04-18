@@ -88,7 +88,7 @@ void RS_SaveDemo(client_t *client) {
         client->uuid);
     }
     else {
-        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s.%i]%s[%s][%s].dm_68", \
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[fc.%s.%i]%s[%s][%s].dm_68", \
         timeInfo->mapname, \
         timeInfo->promode ? "cpm" : "vq3", \
         timeInfo->submode, \

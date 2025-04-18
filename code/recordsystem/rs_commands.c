@@ -23,9 +23,16 @@ static void RS_Top(client_t *client, const char *str) {
         return;
     }
     
-    // Build the URL
-    Com_sprintf(url, sizeof(url), "http://%s/api/commands/top?client_num=%d&cmd_string=%s&curr_map=%s", 
-                "149.28.120.254:8000", clientNum, encoded_str, encoded_map);
+    // Build the URL 
+    Com_sprintf(url, sizeof(url), "http://%s/api/commands/top?client_num=%d&cmd_string=%s&curr_map=%s&gametype=%i&mode=%i&promode=%i", 
+                "149.28.120.254:8000",
+                clientNum,
+                encoded_str,
+                encoded_map,
+                Cvar_VariableIntegerValue( "defrag_gametype"),
+                Cvar_VariableIntegerValue( "defrag_mode"),
+                Cvar_VariableIntegerValue( "df_promode")
+                );
     
     // Free encoded strings when done
     free(encoded_str);
