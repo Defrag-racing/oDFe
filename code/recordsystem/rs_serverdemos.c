@@ -1,11 +1,7 @@
 #include "../server/server.h"
 
 // Static storage for delta compression
-static clientSnapshot_t saved_snap;
-static entityState_t saved_entity_states[MAX_SNAPSHOT_ENTITIES];
-static entityState_t *saved_ents[MAX_SNAPSHOT_ENTITIES];
-
-static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg );
+static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg, entityState_t *oldents );
 
 
 /*
@@ -80,7 +76,7 @@ void RS_SaveDemo(client_t *client) {
     }
 
     if (timeInfo->gametype == 1) { // run mode
-        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[df.%s]%s[%s][%s].dm_68", \
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[mdf.%s]%s[%s][%s].dm_68", \
         timeInfo->mapname, \
         timeInfo->promode ? "cpm" : "vq3", \
         formatTime(timeInfo->time), \
@@ -88,7 +84,7 @@ void RS_SaveDemo(client_t *client) {
         client->uuid);
     }
     else {
-        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[fc.%s.%i]%s[%s][%s].dm_68", \
+        Com_sprintf( finalName, sizeof( finalName ), "demos/%s[mfc.%s.%i]%s[%s][%s].dm_68", \
         timeInfo->mapname, \
         timeInfo->promode ? "cpm" : "vq3", \
         timeInfo->submode, \
@@ -160,67 +156,66 @@ RS_WriteGamestate
 ====================
 */
 void RS_WriteGamestate(client_t *client) {
-	int			start;
-	entityState_t nullstate;
+	int			i;
 	const svEntity_t *svEnt;
 	msg_t		msg;
 	byte		msgBuffer[ MAX_MSGLEN_BUF ];
     int len;
     // entityState_t *ent;
-    // entityState_t nullstate;
+    entityState_t nullstate;
 
 	// accept usercmds starting from current server time only
 	// Com_Memset( &client->lastUsercmd, 0x0, sizeof( client->lastUsercmd ) );
 	// client->lastUsercmd.serverTime = sv.time - 1;
 
 	MSG_Init( &msg, msgBuffer, MAX_MSGLEN );
+    MSG_Bitstream( &msg );
 
 	// NOTE, MRE: all server->client messages now acknowledge
 	// let the client know which reliable clientCommands we have received
 	MSG_WriteLong( &msg, client->lastClientCommand );
 
     client->demoMessageSequence = 1;
+    client->demoCommandSequence = client->reliableSequence;
 	// send any server commands waiting to be sent first.
 	// we have to do this cause we send the client->reliableSequence
 	// with a gamestate and it sets the clc.serverCommandSequence at
 	// the client side
-	SV_UpdateServerCommandsToClient( client, &msg );
+	// SV_UpdateServerCommandsToClient( client, &msg );
 
+    client->demoDeltaNum = 0;
 	// send the gamestate
 	MSG_WriteByte( &msg, svc_gamestate );
 	MSG_WriteLong( &msg, client->reliableSequence );
 
 	// write the configstrings
-	for ( start = 0 ; start < MAX_CONFIGSTRINGS ; start++ ) {
-		if ( *sv.configstrings[ start ] != '\0' ) {
+	for ( i = 0 ; i < MAX_CONFIGSTRINGS ; i++ ) {
+		if ( *sv.configstrings[ i ] != '\0' ) {
 			MSG_WriteByte( &msg, svc_configstring );
-			MSG_WriteShort( &msg, start );
-			if ( start == CS_SYSTEMINFO && sv.pure != sv_pure->integer ) {
+			MSG_WriteShort( &msg, i );
+			if ( i == CS_SYSTEMINFO && sv.pure != sv_pure->integer ) {
 				// make sure we send latched sv.pure, not forced cvar value
 				char systemInfo[BIG_INFO_STRING];
-				Q_strncpyz( systemInfo, sv.configstrings[ start ], sizeof( systemInfo ) );
+				Q_strncpyz( systemInfo, sv.configstrings[ i ], sizeof( systemInfo ) );
 				Info_SetValueForKey_s( systemInfo, sizeof( systemInfo ), "sv_pure", va( "%i", sv.pure ) );
 				MSG_WriteBigString( &msg, systemInfo );
 			} else {
-				MSG_WriteBigString( &msg, sv.configstrings[start] );
+				MSG_WriteBigString( &msg, sv.configstrings[i] );
 			}
 		}
 	}
 
 	// write the baselines
 	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
-	for ( start = 0 ; start < MAX_GENTITIES; start++ ) {
-		if ( !sv.baselineUsed[ start ] ) {
-			continue;
-		}
-		svEnt = &sv.svEntities[ start ];
+	for ( i = 0 ; i < MAX_GENTITIES; i++ ) {
+		svEnt = &sv.svEntities[ i ];
 		MSG_WriteByte( &msg, svc_baseline );
 		MSG_WriteDeltaEntity( &msg, &nullstate, &svEnt->baseline, qtrue );
 	}
 
 	MSG_WriteByte( &msg, svc_EOF );
 
-	MSG_WriteLong( &msg, client - svs.clients );
+	MSG_WriteLong( &msg, client - svs.clients ); // client num
 
 	// write the checksum feed
 	MSG_WriteLong( &msg, sv.checksumFeed );
@@ -239,15 +234,6 @@ void RS_WriteGamestate(client_t *client) {
 	// }
 
     // Finalize message
-    MSG_WriteByte(&msg, svc_EOF);
-
-    // Write the client num - use actual client number
-    MSG_WriteLong(&msg, client - svs.clients);
-
-    // Write the checksum feed
-    MSG_WriteLong(&msg, sv.checksumFeed);
-
-    // End message
     MSG_WriteByte(&msg, svc_EOF);
 
     // Write to demo file
@@ -294,44 +280,46 @@ RS_WriteSnapshot
 ====================
 */
 void RS_WriteSnapshot(client_t *client) {
+    static	clientSnapshot_t saved_snap;
+	static entityState_t saved_ents[ MAX_SNAPSHOT_ENTITIES ];
+
     byte bufData[MAX_MSGLEN_BUF];
     msg_t msg;
     int i, len;
     
+    clientSnapshot_t *snap, *oldSnap;
     // Get current snapshot
-    clientSnapshot_t *frame = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
+    snap = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
     // Com_DPrintf("Writing snapshot to client: %i\n", frame->frameNum);
     
-    // Initialize message buffer
-    MSG_Init(&msg, bufData, sizeof(bufData));
-    MSG_Bitstream(&msg);
-    
+    if ( client->demoDeltaNum ) {
+		oldSnap = NULL;
+	} else {
+		oldSnap = &saved_snap;
+	}
+
+	MSG_Init( &msg, bufData, MAX_MSGLEN );
+	MSG_Bitstream( &msg );
+
     // Write reliable sequence
     MSG_WriteLong(&msg, client->reliableSequence);
     
     // Write server commands
     RS_WriteServerCommands(&msg, client);
     
-    // Write snapshot header
-    MSG_WriteByte(&msg, svc_snapshot);
-    MSG_WriteLong(&msg, sv.time);  // Server time
-    MSG_WriteByte(&msg, client->demoDeltaNum);  // 0 = no delta, 1 = delta
-    MSG_WriteByte(&msg, 0);  // Snap flags
-    
-    // Write area info
-    MSG_WriteByte(&msg, frame->areabytes);
-    MSG_WriteData(&msg, frame->areabits, frame->areabytes);
-    
-    // Delta compress player state
-    if (client->demoDeltaNum == 0) {
-        // First snapshot: no delta
-        MSG_WriteDeltaPlayerstate(&msg, NULL, &frame->ps);
-    } else {
-        // Using previous snapshot for delta
-        MSG_WriteDeltaPlayerstate(&msg, &saved_snap.ps, &frame->ps);
-    }
+    MSG_WriteByte( &msg, svc_snapshot );
+	MSG_WriteLong( &msg, sv.time ); // sv.time
+	MSG_WriteByte( &msg, client->demoDeltaNum ); // 0 or 1
+	MSG_WriteByte( &msg, 0 );  // snapFlags. NOTE: in client-side it's snap->snapFlags which doesn't exist in clientSnapshot_t.
+	MSG_WriteByte( &msg, snap->areabytes );  // areabytes
+	MSG_WriteData( &msg, snap->areabits, snap->areabytes ); // NOTE: snap->areabits is snap->areamask in client side.
+	
+    if ( oldSnap )
+		MSG_WriteDeltaPlayerstate( &msg, &oldSnap->ps, &snap->ps );
+	else
+		MSG_WriteDeltaPlayerstate( &msg, NULL, &snap->ps );
 
-    RS_EmitPacketEntities(&saved_snap, frame, &msg);
+    RS_EmitPacketEntities(&saved_snap, snap, &msg, saved_ents);
     // Finalize message
     MSG_WriteByte(&msg, svc_EOF);
     
@@ -345,23 +333,16 @@ void RS_WriteSnapshot(client_t *client) {
     
     // Save this snapshot for delta compression of next snapshot
     // Create deep copies of entity pointers for delta compression
-    for (i = 0; i < frame->num_entities; i++) {
-        if (frame->ents[i]) {
+
+    for (i = 0; i < snap->num_entities; i++) {
             // Make a copy of each entity state
-            saved_entity_states[i] = *(frame->ents[i]);
-            saved_ents[i] = &saved_entity_states[i];
-        } else {
-            saved_ents[i] = NULL;
-        }
+            // saved_entity_states[i] = *(frame->ents[i]);
+            // saved_ents[i] = &saved_entity_states[i];
+            saved_ents[i] = *(snap->ents[i]);
     }
     
     // Copy the frame structure
-    saved_snap = *frame;
-    
-    // Update the entity pointers to our saved copies
-    for (i = 0; i < MAX_SNAPSHOT_ENTITIES; i++) {
-        saved_snap.ents[i] = saved_ents[i];
-    }
+    saved_snap = *snap;
     
     // Update tracking variables
     client->demoMessageSequence++;
@@ -373,7 +354,7 @@ void RS_WriteSnapshot(client_t *client) {
 RS_EmitPacketEntities
 =================
 */
-static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg ) {
+static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg, entityState_t *oldents ) {
 	entityState_t	*oldent, *newent;
 	int		oldindex, newindex;
 	int		oldnum, newnum;
@@ -401,7 +382,7 @@ static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 		if ( oldindex >= from_num_entities ) {
 			oldnum = MAX_GENTITIES+1;
 		} else {
-			oldent = from->ents[ oldindex ];
+			oldent = &oldents[ oldindex ];
 			oldnum = oldent->number;
 		}
 
