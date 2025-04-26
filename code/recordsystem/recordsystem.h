@@ -33,7 +33,7 @@ char* RS_HttpGet(const char *url);
 char* RS_HttpPost(const char *url, const char *contentType, const char *payload);
 char* RS_UrlEncode(const char *str);
 apiResponse_t* RS_ParseAPIResponse(const char* jsonString);
-void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient);
+void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient, qboolean forceBroadcast);
 void RS_StartRecord(client_t *client);
 void RS_StopRecord(client_t *client);
 void RS_WriteGamestate( client_t *client);

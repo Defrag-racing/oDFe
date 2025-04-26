@@ -42,7 +42,7 @@ static void RS_Top(client_t *client, const char *str) {
     response = RS_ParseAPIResponse(RS_HttpGet(url));
     
     if (response) {
-        RS_PrintAPIResponse(response, qfalse);
+        RS_PrintAPIResponse(response, qfalse, qfalse);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
@@ -70,7 +70,7 @@ static void RS_Recent(client_t *client, const char *str) {
     response = RS_ParseAPIResponse(RS_HttpGet(url));
     
     if (response) {
-        RS_PrintAPIResponse(response, qfalse);
+        RS_PrintAPIResponse(response, qfalse, qfalse);
         free(response); // Free the response
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Failed to get response\n\"");
@@ -123,7 +123,7 @@ static void RS_Login(client_t *client, const char *str) {
             strncpy(client->uuid, response->uuid, UUID_LENGTH);
             strncpy(client->displayName, response->displayName, MAX_NAME_LENGTH);      
         }
-        RS_PrintAPIResponse(response, qtrue);      
+        RS_PrintAPIResponse(response, qtrue, qtrue);      
     } else {
         RS_GameSendServerCommand(clientNum, "print \"^1Bad response from server, contact defrag.racing admins\n\"");
         Com_DPrintf("RS_ERROR: Couldn't parse response json: %s\n", jsonString );
@@ -143,7 +143,7 @@ static void RS_Logout(client_t *client, const char *str) {
     client->loggedIn = qfalse; // Log them out locally, don't wait for server.
     strcpy(client->uuid, "");
     strcpy(client->displayName, "");
-    RS_GameSendServerCommand(clientNum, RS_va("print \"%s^5, ^7You are now logged out^5.\n\"", client->name));
+    RS_GameSendServerCommand(-1, RS_va("print \"%s^5, ^7You are now logged out^5.\n\"", client->name));
 }
 
 typedef struct {

@@ -420,7 +420,7 @@ apiResponse_t *RS_ParseAPIResponse(const char* jsonString) {
     return response;
 }
 
-void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
+void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient, qboolean forceBroadcast) {
     const char *finalMessage="";
     const char *mentionPrefix="";
     client_t *targetClient;
@@ -437,7 +437,10 @@ void RS_PrintAPIResponse(apiResponse_t *response, qboolean mentionClient) {
 
     if (response->message != NULL) {
         finalMessage = RS_va("%s%s", mentionPrefix, response->message);
-        RS_GameSendServerCommand(response->targetClientNum, RS_va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
+        if (forceBroadcast)
+            RS_GameSendServerCommand(-1, RS_va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
+        else 
+            RS_GameSendServerCommand(response->targetClientNum, RS_va("print \"^5(^7defrag^5.^7racing^5)^7 %s\n\"", finalMessage));
     }
 }
 

@@ -214,7 +214,7 @@ static void RS_SendTime(client_t *client, const char *cmdString) {
     free(jsonString);
     
     if (response) {
-        RS_PrintAPIResponse(response, qtrue);
+        RS_PrintAPIResponse(response, qtrue, qtrue);
         free(response);
     } else {
         RS_GameSendServerCommand(timeInfo->clientNum, "print \"^1Failed to connect to record server\n\"");
