@@ -3,7 +3,6 @@
 // Static storage for delta compression
 static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSnapshot_t *to, msg_t *msg, entityState_t *oldents );
 
-
 /*
 ====================
 RS_StartRecord
@@ -111,8 +110,6 @@ void RS_SaveDemo(client_t *client) {
     client->awaitingDemoSave = qfalse;
     client->demoFile = FS_INVALID_HANDLE;
     client->isRecording = qfalse;
-    // client->demoWaiting = qfalse;
-    client->demoDeltaNum = 0;
 }
 
 /*
@@ -146,8 +143,6 @@ void RS_StopRecord(client_t *client) {
     }
 
     client->isRecording = qfalse;
-    // client->demoWaiting = qfalse;
-    client->demoDeltaNum = 0;
 }
 
 /*
@@ -208,7 +203,10 @@ void RS_WriteGamestate(client_t *client) {
 	// write the baselines
 	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
 	for ( i = 0 ; i < MAX_GENTITIES; i++ ) {
-		svEnt = &sv.svEntities[ i ];
+        if ( !sv.baselineUsed[ i ] ) {
+			continue;
+		}
+        svEnt = &sv.svEntities[ i ];
 		MSG_WriteByte( &msg, svc_baseline );
 		MSG_WriteDeltaEntity( &msg, &nullstate, &svEnt->baseline, qtrue );
 	}
@@ -280,8 +278,6 @@ RS_WriteSnapshot
 ====================
 */
 void RS_WriteSnapshot(client_t *client) {
-    static	clientSnapshot_t saved_snap;
-	static entityState_t saved_ents[ MAX_SNAPSHOT_ENTITIES ];
 
     byte bufData[MAX_MSGLEN_BUF];
     msg_t msg;
@@ -295,7 +291,7 @@ void RS_WriteSnapshot(client_t *client) {
     if ( client->demoDeltaNum ) {
 		oldSnap = NULL;
 	} else {
-		oldSnap = &saved_snap;
+		oldSnap = &client->savedSnap;
 	}
 
 	MSG_Init( &msg, bufData, MAX_MSGLEN );
@@ -319,7 +315,7 @@ void RS_WriteSnapshot(client_t *client) {
 	else
 		MSG_WriteDeltaPlayerstate( &msg, NULL, &snap->ps );
 
-    RS_EmitPacketEntities(&saved_snap, snap, &msg, saved_ents);
+    RS_EmitPacketEntities(oldSnap, snap, &msg, client->savedEnts);
     // Finalize message
     MSG_WriteByte(&msg, svc_EOF);
     
@@ -338,11 +334,11 @@ void RS_WriteSnapshot(client_t *client) {
             // Make a copy of each entity state
             // saved_entity_states[i] = *(frame->ents[i]);
             // saved_ents[i] = &saved_entity_states[i];
-            saved_ents[i] = *(snap->ents[i]);
+            client->savedEnts[i] = *(snap->ents[i]);
     }
     
     // Copy the frame structure
-    saved_snap = *snap;
+    client->savedSnap = *snap;
     
     // Update tracking variables
     client->demoMessageSequence++;

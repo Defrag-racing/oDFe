@@ -264,6 +264,8 @@ typedef struct client_s {
 	int				demoCommandSequence;
 	int				demoDeltaNum;
 	int				demoMessageSequence;
+	clientSnapshot_t savedSnap;
+	entityState_t savedEnts[ MAX_SNAPSHOT_ENTITIES ];
 #endif
 } client_t;
 
