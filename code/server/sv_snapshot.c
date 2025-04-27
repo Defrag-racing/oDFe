@@ -695,10 +695,10 @@ void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
     // send the datagram
     SV_Netchan_Transmit(client, msg);
 
-// #ifdef ENABLE_RS
-// 	if (isSnapshot)
-// 		RS_DemoHandler(client);
-// #endif
+#ifdef ENABLE_RS
+	if (isSnapshot)
+		RS_DemoHandler(client);
+#endif
 }
 
 

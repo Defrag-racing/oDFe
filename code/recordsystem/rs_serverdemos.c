@@ -207,7 +207,6 @@ void RS_WriteGamestate(client_t *client) {
 			continue;
 		}
         svEnt = &sv.svEntities[i];
-        client->savedEnts[i] = sv.svEntities[i].baseline; // Copy baselines to client's saved ents
 		MSG_WriteByte( &msg, svc_baseline );
 		MSG_WriteDeltaEntity( &msg, &nullstate, &svEnt->baseline, qtrue );
 	}
