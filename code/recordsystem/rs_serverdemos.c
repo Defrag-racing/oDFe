@@ -46,9 +46,9 @@ void RS_StartRecord(client_t *client) {
 
 /*
 ====================
-RS_StopRecord
+RS_SaveDemo
 
-stop recording a demo
+Save a demo on a logged clientTimerStop
 ====================
 */
 void RS_SaveDemo(client_t *client) {
@@ -203,10 +203,11 @@ void RS_WriteGamestate(client_t *client) {
 	// write the baselines
 	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
 	for ( i = 0 ; i < MAX_GENTITIES; i++ ) {
-        if ( !sv.baselineUsed[ i ] ) {
+        if ( !sv.baselineUsed[i] ) {
 			continue;
 		}
-        svEnt = &sv.svEntities[ i ];
+        svEnt = &sv.svEntities[i];
+        client->savedEnts[i] = sv.svEntities[i].baseline; // Copy baselines to client's saved ents
 		MSG_WriteByte( &msg, svc_baseline );
 		MSG_WriteDeltaEntity( &msg, &nullstate, &svEnt->baseline, qtrue );
 	}
@@ -278,21 +279,17 @@ RS_WriteSnapshot
 ====================
 */
 void RS_WriteSnapshot(client_t *client) {
-
     byte bufData[MAX_MSGLEN_BUF];
+    clientSnapshot_t *oldsnap;
+    playerState_t *oldps;
     msg_t msg;
     int i, len;
+    int	snapFlags;
     
-    clientSnapshot_t *snap, *oldSnap;
+    clientSnapshot_t *snap;
     // Get current snapshot
     snap = &client->frames[client->netchan.outgoingSequence & PACKET_MASK];
     // Com_DPrintf("Writing snapshot to client: %i\n", frame->frameNum);
-    
-    if ( client->demoDeltaNum ) {
-		oldSnap = NULL;
-	} else {
-		oldSnap = &client->savedSnap;
-	}
 
 	MSG_Init( &msg, bufData, MAX_MSGLEN );
 	MSG_Bitstream( &msg );
@@ -306,21 +303,34 @@ void RS_WriteSnapshot(client_t *client) {
     MSG_WriteByte( &msg, svc_snapshot );
 	MSG_WriteLong( &msg, sv.time ); // sv.time
 	MSG_WriteByte( &msg, client->demoDeltaNum ); // 0 or 1
-	MSG_WriteByte( &msg, 0 );  // snapFlags. NOTE: in client-side it's snap->snapFlags which doesn't exist in clientSnapshot_t.
+
+    snapFlags = svs.snapFlagServerBit;
+	if ( client->rateDelayed ) {
+		snapFlags |= SNAPFLAG_RATE_DELAYED;
+	}
+	if ( client->state != CS_ACTIVE ) {
+		snapFlags |= SNAPFLAG_NOT_ACTIVE;
+	}
+	MSG_WriteByte( &msg, snapFlags );  // snapFlags. NOTE: in client-side it's snap->snapFlags which doesn't exist in clientSnapshot_t.
 	MSG_WriteByte( &msg, snap->areabytes );  // areabytes
 	MSG_WriteData( &msg, snap->areabits, snap->areabytes ); // NOTE: snap->areabits is snap->areamask in client side.
 	
-    if ( oldSnap )
-		MSG_WriteDeltaPlayerstate( &msg, &oldSnap->ps, &snap->ps );
-	else
-		MSG_WriteDeltaPlayerstate( &msg, NULL, &snap->ps );
-
-    RS_EmitPacketEntities(oldSnap, snap, &msg, client->savedEnts);
+    if ( client->demoDeltaNum == 0 ) {// First snapshot, don't delta compress.
+        oldsnap = NULL;
+        oldps = NULL;
+    }
+	else {
+        oldsnap = &client->savedSnap;
+        oldps = &client->savedSnap.ps;
+    }
+    
+    MSG_WriteDeltaPlayerstate( &msg, oldps, &snap->ps );
+    RS_EmitPacketEntities(oldsnap, snap, &msg, client->savedEnts);
     // Finalize message
     MSG_WriteByte(&msg, svc_EOF);
     
     // Write to demo file
-    len = LittleLong(client->demoMessageSequence);
+    len = LittleLong(client->demoMessageSequence); // client->netchan.outgoingSequence
     FS_Write(&len, 4, client->demoFile);
     
     len = LittleLong(msg.cursize);
@@ -329,20 +339,16 @@ void RS_WriteSnapshot(client_t *client) {
     
     // Save this snapshot for delta compression of next snapshot
     // Create deep copies of entity pointers for delta compression
-
     for (i = 0; i < snap->num_entities; i++) {
-            // Make a copy of each entity state
-            // saved_entity_states[i] = *(frame->ents[i]);
-            // saved_ents[i] = &saved_entity_states[i];
-            client->savedEnts[i] = *(snap->ents[i]);
+        // Make a copy of each entity state
+        client->savedEnts[i] = *(snap->ents[i]);
     }
-    
     // Copy the frame structure
     client->savedSnap = *snap;
     
     // Update tracking variables
     client->demoMessageSequence++;
-    client->demoDeltaNum = 1;  // All future snapshots use delta
+    client->demoDeltaNum = 1; // Turn on delta for next snapshot
 }
 
 /*
@@ -378,7 +384,7 @@ static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 		if ( oldindex >= from_num_entities ) {
 			oldnum = MAX_GENTITIES+1;
 		} else {
-			oldent = &oldents[ oldindex ];
+			oldent = from->ents[ oldindex ];
 			oldnum = oldent->number;
 		}
 
@@ -407,7 +413,7 @@ static void RS_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 		}
 	}
 
-	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
+	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );
 }
 
 void RS_DemoHandler(client_t *client) {
