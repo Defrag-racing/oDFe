@@ -135,7 +135,6 @@ static void RS_Login(client_t *client, const char *str) {
 
 static void RS_Logout(client_t *client, const char *str) {
     int clientNum = client - svs.clients;
-    SV_DropClient( client, "Timed out." );
 
     if (client->loggedIn == qfalse) {
         RS_GameSendServerCommand(clientNum, RS_va("print \"%s^5, ^7You are not logged in^5.\n\"", client->name));
