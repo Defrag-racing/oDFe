@@ -49,7 +49,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     str = buffer;
     
     // Parse client number
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -70,7 +70,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     }
     
     // Parse time
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -85,7 +85,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->time = atoi(token);
     
     // Parse mapname
-    token = COM_ParseExt(&str, qtrue); // Use qtrue to handle quoted strings properly
+    token = RS_COMParse(&str); // Use qtrue to handle quoted strings properly
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -101,7 +101,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     
     // Parse player name and check for colon in unquoted name
     const char* rawStr = str; // Save position before parsing to check quotes
-    token = COM_ParseExt(&str, qtrue);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -124,7 +124,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     Q_strncpyz(info->name, token, sizeof(info->name));
     
     // Parse gametype
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -137,7 +137,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->gametype = atoi(token);
     
     // Parse promode
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -151,7 +151,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->promode = atoi(token);
     
     // Parse mode
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -165,7 +165,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->submode = atoi(token);
     
     // Parse interference flag
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -178,7 +178,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->interferenceOff = atoi(token);
     
     // Parse OB flag
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -191,7 +191,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->obEnabled = atoi(token);
     
     // Parse version
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -204,7 +204,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     info->version = atoi(token);
     
     // Parse date
-    token = COM_Parse(&str);
+    token = RS_COMParse(&str);
     if (!token[0]) {
         Z_Free(info);
         return NULL;
@@ -216,7 +216,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     }
     Q_strncpyz(info->date, token, sizeof(info->date));
 
-    token = COM_Parse(&str); // There should be nothing after.
+    token = RS_COMParse(&str); // There should be nothing after.
     if (token[0]) {
         Z_Free(info);
         return NULL;

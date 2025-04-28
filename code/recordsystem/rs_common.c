@@ -2,6 +2,10 @@
 #include <curl/curl.h>
 #include "cJSON.h"
 
+static char	com_token[MAX_TOKEN_CHARS];
+static int  com_lines;
+static int	com_tokenline;
+
 
 qboolean startsWith(const char *string, const char *prefix) {
     if (!string || !prefix) {
@@ -472,4 +476,109 @@ const char *RS_va(const char *format, ...) {
     va_end(argptr);
     
     return buf;
+}
+
+
+static const char *SkipWhitespace( const char *data, qboolean *hasNewLines ) {
+	int c;
+
+	while( (c = *data) <= ' ') {
+		if( !c ) {
+			return NULL;
+		}
+		if( c == '\n' ) {
+			com_lines++;
+			*hasNewLines = qtrue;
+		}
+		data++;
+	}
+
+	return data;
+}
+
+const char *RS_COMParse( const char **data_p )
+{
+	int c = 0, len;
+	qboolean hasNewLines = qfalse;
+	const char *data;
+
+	data = *data_p;
+	len = 0;
+	com_token[0] = '\0';
+	com_tokenline = 0;
+
+	// make sure incoming data is valid
+	if ( !data )
+	{
+		*data_p = NULL;
+		return com_token;
+	}
+	
+	while ( 1 )
+	{
+		// skip whitespace
+		data = SkipWhitespace( data, &hasNewLines );
+		if ( !data )
+		{
+			*data_p = NULL;
+			return com_token;
+		}
+
+		if ( hasNewLines )
+		{
+			*data_p = data;
+			return com_token;
+		}
+
+        c = *data;
+        break;
+	}
+
+	// token starts on this line
+	com_tokenline = com_lines;
+
+	// handle quoted strings
+	if ( c == '"' )
+	{
+		data++;
+		while ( 1 )
+		{
+			c = *data;
+			if ( c == '"' || c == '\0' )
+			{
+				if ( c == '"' )
+					data++;
+				com_token[ len ] = '\0';
+				*data_p = data;
+				return com_token;
+			}
+			data++;
+			if ( c == '\n' )
+			{
+				com_lines++;
+			}
+			if ( len < ARRAY_LEN( com_token )-1 )
+			{
+				com_token[ len ] = c;
+				len++;
+			}
+		}
+	}
+
+	// parse a regular word
+	do
+	{
+		if ( len < ARRAY_LEN( com_token )-1 )
+		{
+			com_token[ len ] = c;
+			len++;
+		}
+		data++;
+		c = *data;
+	} while ( c > ' ' );
+
+	com_token[ len ] = '\0';
+
+	*data_p = data;
+	return com_token;
 }

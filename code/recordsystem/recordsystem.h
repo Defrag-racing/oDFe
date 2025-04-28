@@ -41,5 +41,6 @@ void RS_WriteSnapshot(client_t *client);
 void RS_SaveDemo(client_t *client);
 void RS_DemoHandler(client_t *client);
 const char *RS_va(const char *format, ...);
+const char *RS_COMParse( const char **data_p );
 
 #endif // __RECORDSYSTEM_H__
