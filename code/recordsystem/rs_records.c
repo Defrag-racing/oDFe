@@ -130,7 +130,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
         return NULL;
     }
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) != 1) {
         Z_Free(info);
         return NULL;
     }
@@ -144,7 +144,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     }
 
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) != 1) {
         Z_Free(info);
         return NULL;
     }
@@ -158,7 +158,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     }
 
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) < 2) {
         Z_Free(info);
         return NULL;
     }
@@ -171,7 +171,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
         return NULL;
     }
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) != 1) {
         Z_Free(info);
         return NULL;
     }
@@ -184,7 +184,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
         return NULL;
     }
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) != 1) {
         Z_Free(info);
         return NULL;
     }
@@ -210,7 +210,7 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
         return NULL;
     }
     // Validate (no carets)
-    if (strchr(token, '^') != NULL) {
+    if (strchr(token, '^') != NULL || strlen(token) != 10) {
         Z_Free(info);
         return NULL;
     }
