@@ -216,8 +216,8 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) 
     }
     Q_strncpyz(info->date, token, sizeof(info->date));
 
-    token = RS_COMParse(&str); // There should be nothing after.
-    if (token[0]) {
+    // Check for trails. Should only be a newline remaining
+    if (*str != '\n') {
         Z_Free(info);
         return NULL;
     }
