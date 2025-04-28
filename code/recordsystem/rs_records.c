@@ -8,7 +8,7 @@ Parses a timer stop log message into a structured format
 ====================
 */
 
-static timeInfo_t* RS_ParseClientTimerStop(const char *logLine) {
+static timeInfo_t* RS_ParseClientTimerStop(const char *logLine, qboolean debug) {
     timeInfo_t* info;
     char buffer[1024];
     const char *token, *str;
@@ -216,7 +216,14 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine) {
     }
     Q_strncpyz(info->date, token, sizeof(info->date));
 
-    RS_GameSendServerCommand(-1, RS_va("print \"^5Timer stop detected:\n\
+    token = COM_Parse(&str); // There should be nothing after.
+    if (token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+
+    if (debug) {
+        RS_GameSendServerCommand(-1, RS_va("print \"^5Timer stop detected:\n\
 ^5clientNum: ^3%i\n\
 ^5time: ^3%i\n\
 ^5mapname: ^3%s\n\
@@ -228,8 +235,9 @@ static timeInfo_t* RS_ParseClientTimerStop(const char *logLine) {
 ^5obs enabled: ^3%i\n\
 ^5df version: ^3%i\n\
 ^5date: ^3%s\n\""\
-    , info->clientNum, info->time, info->mapname, info->name, info->gametype, info->promode,\
-    info->submode, info->interferenceOff, info->obEnabled, info->version, info->date));
+        , info->clientNum, info->time, info->mapname, info->name, info->gametype, info->promode,\
+        info->submode, info->interferenceOff, info->obEnabled, info->version, info->date));
+    }
 
     return info;
 }
@@ -248,7 +256,7 @@ static void RS_SendTime(client_t *client, const char *cmdString) {
     cJSON *json;
     char url[512];
 
-    timeInfo_t *timeInfo = RS_ParseClientTimerStop(cmdString);
+    timeInfo_t *timeInfo = RS_ParseClientTimerStop(cmdString, qfalse);
     
     // Create a JSON object for the request
     json = cJSON_CreateObject();
@@ -263,7 +271,7 @@ static void RS_SendTime(client_t *client, const char *cmdString) {
     // Convert JSON object to string
     jsonString = cJSON_Print(json);
     cJSON_Delete(json); // Free the JSON object
-    Com_DPrintf("json payload: %s\n", jsonString);
+    // Com_DPrintf("json payload: %s\n", jsonString);
 
     Com_sprintf(url, sizeof(url), "http://%s/api/records", "149.28.120.254:8000");
 
@@ -282,7 +290,7 @@ static void RS_SendTime(client_t *client, const char *cmdString) {
 }
 
 void RS_Gateway(const char *s) {
-    timeInfo_t *timeInfo = RS_ParseClientTimerStop(s);
+    timeInfo_t *timeInfo = RS_ParseClientTimerStop(s, qtrue);
     if (timeInfo && Cvar_VariableIntegerValue("sv_cheats") == 0) {
 
         client_t *client = &svs.clients[timeInfo->clientNum];

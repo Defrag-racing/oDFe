@@ -320,7 +320,7 @@ char* RS_HttpPost(const char *url, const char *contentType, const char *payload)
     }
     
     // Log payload
-    Com_Printf("RS: Payload: %s\n", payload ? payload : "(none)");
+    // Com_Printf("RS: Payload: %s\n", payload ? payload : "(none)");
     
     // Set options
     curl_easy_setopt(curl, CURLOPT_URL, url);
