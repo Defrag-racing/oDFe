@@ -8,36 +8,34 @@ Parses a timer stop log message into a structured format
 ====================
 */
 
-static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
+static timeInfo_t* RS_ParseClientTimerStop(const char *logLine) {
     timeInfo_t* info;
     char buffer[1024];
     const char *token, *str;
     
-    // Check that the line starts with "ClientTimerStop:" without color codes in between
-    if (!logLine) {
-        return NULL;
-    }
-    
     // Validate the prefix to ensure there are no color codes between "ClientTimerStop" and ":"
-    if (strncmp(logLine, "ClientTimerStop", 15) != 0) {
+    if (!startsWith(logLine, "ClientTimerStop:")) {
         return NULL;
     }
     
-    // Find the position of the colon
+    // // Find the position of the colon
     const char *colonPos = strchr(logLine, ':');
-    if (!colonPos) {
-        return NULL;
-    }
+    // if (!colonPos) {
+    //     return NULL;
+    // }
     
-    // Check for any characters between "ClientTimerStop" and ":" that aren't spaces
-    for (const char *p = logLine + 15; p < colonPos; p++) {
-        if (*p != ' ' && *p != '\t') {
-            // Found a non-space character (could be ^7 or other color code)
-            return NULL;
-        }
-    }
+    // // Check for any characters between "ClientTimerStop" and ":" that aren't spaces
+    // for (const char *p = logLine + 15; p < colonPos; p++) {
+    //     if (*p != ' ' && *p != '\t') {
+    //         // Found a non-space character (could be ^7 or other color code)
+    //         return NULL;
+    //     }
+    // }
     
-    // Allocate memory for the structure
+    // Skip past "ClientTimerStop: "
+    logLine = colonPos + 2;
+    while (*logLine && *logLine == ' ') logLine++; // Skip any extra spaces
+
     info = (timeInfo_t*)Z_Malloc(sizeof(timeInfo_t));
     if (!info) {
         return NULL;
@@ -45,10 +43,6 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
     
     // Initialize the structure
     memset(info, 0, sizeof(timeInfo_t));
-    
-    // Skip past "ClientTimerStop:"
-    logLine = colonPos + 1;
-    while (*logLine && *logLine == ' ') logLine++; // Skip any extra spaces
     
     // Make a copy of the line to tokenize
     Q_strncpyz(buffer, logLine, sizeof(buffer));
@@ -81,6 +75,13 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
+    
     info->time = atoi(token);
     
     // Parse mapname
@@ -89,9 +90,16 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+
+    // Validate time (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
+
     Q_strncpyz(info->mapname, token, sizeof(info->mapname));
     
-    // Parse netname and check for colon in unquoted name
+    // Parse player name and check for colon in unquoted name
     const char* rawStr = str; // Save position before parsing to check quotes
     token = COM_ParseExt(&str, qtrue);
     if (!token[0]) {
@@ -106,9 +114,9 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         wasQuoted = qtrue;
     }
     
-    // Check for unquoted name containing a colon
-    if (!wasQuoted && strchr(token, ':')) {
-        // Unquoted name contains a colon - reject this line
+    // Check for unquoted name containing a caret
+    if (!wasQuoted && strchr(token, '^')) {
+        // Unquoted name contains a caret - reject this line
         Z_Free(info);
         return NULL;
     }
@@ -121,6 +129,11 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
     info->gametype = atoi(token);
     
     // Parse promode
@@ -129,11 +142,23 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
     info->promode = atoi(token);
     
-    // Parse submode
+    // Parse mode
     token = COM_Parse(&str);
     if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
         Z_Free(info);
         return NULL;
     }
@@ -145,11 +170,21 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
     info->interferenceOff = atoi(token);
     
     // Parse OB flag
     token = COM_Parse(&str);
     if (!token[0]) {
+        Z_Free(info);
+        return NULL;
+    }
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
         Z_Free(info);
         return NULL;
     }
@@ -161,6 +196,11 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
     info->version = atoi(token);
     
     // Parse date
@@ -169,8 +209,28 @@ static timeInfo_t* RS_ParseClientTimerStop(const char* logLine) {
         Z_Free(info);
         return NULL;
     }
+    // Validate (no carets)
+    if (strchr(token, '^') != NULL) {
+        Z_Free(info);
+        return NULL;
+    }
     Q_strncpyz(info->date, token, sizeof(info->date));
-    
+
+    RS_GameSendServerCommand(-1, RS_va("print \"^5Timer stop detected:\n\
+^5clientNum: ^3%i\n\
+^5time: ^3%i\n\
+^5mapname: ^3%s\n\
+^5player name: ^3%s\n\
+^5gametype: ^3%i\n\
+^5promode: ^3%i\n\
+^5mode: ^3%i\n\
+^5interference off: ^3%i\n\
+^5obs enabled: ^3%i\n\
+^5df version: ^3%i\n\
+^5date: ^3%s\n\""\
+    , info->clientNum, info->time, info->mapname, info->name, info->gametype, info->promode,\
+    info->submode, info->interferenceOff, info->obEnabled, info->version, info->date));
+
     return info;
 }
 
@@ -224,12 +284,6 @@ static void RS_SendTime(client_t *client, const char *cmdString) {
 void RS_Gateway(const char *s) {
     timeInfo_t *timeInfo = RS_ParseClientTimerStop(s);
     if (timeInfo && Cvar_VariableIntegerValue("sv_cheats") == 0) {
-
-        // if (timeInfo->clientNum >= 0 && timeInfo->clientNum < MAX_CLIENTS) {
-        //     return;
-        // }
-
-        Com_DPrintf("Client timer stop detected for client %i with time %i\n", timeInfo->clientNum, timeInfo->time);
 
         client_t *client = &svs.clients[timeInfo->clientNum];
         if (client->loggedIn) {
