@@ -28,6 +28,7 @@ BUILD_SERVER     = 1
 
 USE_SDL          = 1
 USE_CURL         = 1
+USE_PCRE2        = 1
 USE_LOCAL_HEADERS= 0
 USE_SYSTEM_JPEG  = 0
 
@@ -45,8 +46,8 @@ USE_RENDERER_DLOPEN = 1
 # valid options: opengl, vulkan, opengl2
 RENDERER_DEFAULT = opengl
 
-CNAME            = quake3e
-DNAME            = quake3e.ded
+CNAME            = oDFe
+DNAME            = oDFe.ded
 
 RENDERER_PREFIX  = $(CNAME)
 
@@ -153,6 +154,10 @@ ifndef USE_CURL_DLOPEN
   else
     USE_CURL_DLOPEN=1
   endif
+endif
+
+ifndef USE_PCRE2
+  USE_PCRE2=1
 endif
 
 ifndef USE_OGG_VORBIS
@@ -332,6 +337,13 @@ ifeq ($(USE_CURL),1)
   endif
 endif
 
+ifeq ($(USE_PCRE2),1)
+  BASE_CFLAGS += -DUSE_PCRE2
+  ifeq ($(MINGW),1)
+    BASE_CFLAGS += -DPCRE2_STATIC
+  endif
+endif
+
 ifeq ($(USE_VULKAN_API),1)
   BASE_CFLAGS += -DUSE_VULKAN_API
 endif
@@ -453,6 +465,20 @@ ifdef MINGW
     CLIENT_LDFLAGS += -lcurl -lwldap32 -lcrypt32
   endif
 
+  ifeq ($(USE_PCRE2),1)
+    BASE_CFLAGS += -I$(MOUNT_DIR)/libpcre2/include
+    ifeq ($(ARCH),x86)
+      CLIENT_LDFLAGS += -L$(MOUNT_DIR)/libpcre2/mingw/MINGW32
+    else
+      CLIENT_LDFLAGS += -L$(MOUNT_DIR)/libpcre2/mingw/MINGW64
+    endif
+    ifeq ($(DEBUG),1)
+      CLIENT_LDFLAGS += -lpcre2-8d
+    else
+      CLIENT_LDFLAGS += -lpcre2-8
+    endif
+  endif
+
   ifeq ($(USE_OGG_VORBIS),1)
     BASE_CFLAGS += -DUSE_OGG_VORBIS $(OGG_FLAGS) $(VORBIS_FLAGS)
     CLIENT_LDFLAGS += $(OGG_LIBS) $(VORBIS_LIBS)
@@ -511,6 +537,11 @@ ifeq ($(COMPILE_PLATFORM),darwin)
 
   ifeq ($(USE_SYSTEM_JPEG),1)
     CLIENT_LDFLAGS += -ljpeg
+  endif
+
+  ifeq ($(USE_PCRE2),1)
+    BASE_CFLAGS += $(shell pcre2-config --cflags)
+    CLIENT_LDFLAGS += -lpcre2-8
   endif
 
   ifeq ($(USE_OGG_VORBIS),1)
@@ -577,6 +608,10 @@ else
     ifeq ($(USE_CURL_DLOPEN),0)
       CLIENT_LDFLAGS += -lcurl
     endif
+  endif
+
+  ifeq ($(USE_PCRE2),1)
+    CLIENT_LDFLAGS += -lpcre2-8
   endif
 
   ifeq ($(USE_OGG_VORBIS),1)
@@ -692,10 +727,10 @@ default: release
 all: debug release
 
 debug:
-	@$(MAKE) targets B=$(BD) CFLAGS="$(CFLAGS) $(DEBUG_CFLAGS)" LDFLAGS="$(LDFLAGS) $(DEBUG_LDFLAGS)" V=$(V)
+	@$(MAKE) targets DEBUG=1 B=$(BD) CFLAGS="$(CFLAGS) $(DEBUG_CFLAGS)" LDFLAGS="$(LDFLAGS) $(DEBUG_LDFLAGS)" V=$(V)
 
 release:
-	@$(MAKE) targets B=$(BR) CFLAGS="$(CFLAGS) $(RELEASE_CFLAGS)" V=$(V)
+	@$(MAKE) targets DEBUG=0 B=$(BR) CFLAGS="$(CFLAGS) $(RELEASE_CFLAGS)" V=$(V)
 
 define ADD_COPY_TARGET
 TARGETS += $2
@@ -1022,6 +1057,7 @@ Q3OBJ = \
   $(B)/client/cl_scrn.o \
   $(B)/client/cl_ui.o \
   $(B)/client/cl_avi.o \
+  $(B)/client/cl_tc_vis.o \
   $(B)/client/cl_jpeg.o \
   \
   $(B)/client/cm_load.o \

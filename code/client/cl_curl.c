@@ -944,7 +944,7 @@ qboolean Com_DL_Begin( download_t *dl, const char *localName, const char *remote
 
 		Q_strncpyz( dl->URL, remoteURL, sizeof( dl->URL ) );
 
-		if ( !Q_replace( "%1", escapedName, dl->URL, sizeof( dl->URL ) ) )
+		if ( !Q_replace( "%m", escapedName, dl->URL, sizeof( dl->URL ) ) )
 		{
 			if ( dl->URL[strlen(dl->URL)] != '/' )
 				Q_strcat( dl->URL, sizeof( dl->URL ), "/" );
@@ -960,7 +960,7 @@ qboolean Com_DL_Begin( download_t *dl, const char *localName, const char *remote
 
 	Com_Printf( "URL: %s\n", dl->URL );
 
-	if ( cl_dlDirectory->integer ) {
+	if ( dl_usebaseq3->integer ) {
 		Q_strncpyz( dl->gameDir, FS_GetBaseGameDir(), sizeof( dl->gameDir ) );
 	} else {
 		Q_strncpyz( dl->gameDir, FS_GetCurrentGameDir(), sizeof( dl->gameDir ) );
@@ -989,7 +989,7 @@ qboolean Com_DL_Begin( download_t *dl, const char *localName, const char *remote
 
 	dl->func.easy_setopt( dl->cURL, CURLOPT_URL, dl->URL );
 	dl->func.easy_setopt( dl->cURL, CURLOPT_TRANSFERTEXT, 0 );
-	//dl->func.easy_setopt( dl->cURL, CURLOPT_REFERER, "q3a://127.0.0.1" );
+	//dl->func.easy_setopt( dl->cURL, CURLOPT_REFERER, "defrag://127.0.0.1" );
 	dl->func.easy_setopt( dl->cURL, CURLOPT_REFERER, dl->URL );
 	dl->func.easy_setopt( dl->cURL, CURLOPT_USERAGENT, Q3_VERSION );
 	dl->func.easy_setopt( dl->cURL, CURLOPT_WRITEFUNCTION, Com_DL_CallbackWrite );

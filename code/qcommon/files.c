@@ -4694,7 +4694,7 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the installation folder of the game." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
-	fs_steampath = Cvar_Get( "fs_steampath", Sys_SteamPath(), CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
+	fs_steampath = Cvar_Get( "fs_steampath", "", CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 
 	/* parse fs_basegame cvar */
 	if ( basegame_cnt == 0 || Q_stricmp( basegame, fs_basegame->string ) ) {
@@ -4921,7 +4921,7 @@ static void FS_CheckIdPaks( void )
 				{
 					Com_Printf("\n\n"
 						"**************************************************\n"
-						"ERROR: pak0.pk3 is present but its checksum (%u)\n"
+						"WARNING: pak0.pk3 is present but its checksum (%u)\n"
 						"is not correct. Please re-copy pak0.pk3 from your\n"
 						"legitimate Q3 CDROM.\n"
 						"**************************************************\n\n\n",
@@ -4931,13 +4931,12 @@ static void FS_CheckIdPaks( void )
 				{
 					Com_Printf("\n\n"
 						"**************************************************\n"
-						"ERROR: pak%d.pk3 is present but its checksum (%u)\n"
+						"WARNING: pak%d.pk3 is present but its checksum (%u)\n"
 						"is not correct. Please re-install Quake 3 Arena \n"
 						"Point Release v1.32 pk3 files\n"
 						"**************************************************\n\n\n",
 						pakBasename[3]-'0', path->pack->checksum );
 				}
-				Com_Error(ERR_FATAL, "\n* You need to install correct Quake III Arena files in order to play *");
 			}
 
 			foundPak |= 1<<(pakBasename[3]-'0');

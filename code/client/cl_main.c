@@ -57,7 +57,6 @@ cvar_t	*cl_allowDownload;
 #ifdef USE_CURL
 cvar_t	*cl_mapAutoDownload;
 #endif
-cvar_t	*cl_conXOffset;
 cvar_t	*cl_conColor;
 cvar_t	*cl_inGameVideo;
 
@@ -67,8 +66,8 @@ cvar_t	*cl_lanForcePackets;
 
 cvar_t	*cl_guidServerUniq;
 
-cvar_t	*cl_dlURL;
-cvar_t	*cl_dlDirectory;
+cvar_t	*dl_source;
+cvar_t	*dl_usebaseq3;
 
 cvar_t	*cl_reconnectArgs;
 
@@ -1575,9 +1574,9 @@ static void CL_Connect_f( void ) {
 	Q_strncpyz( buffer, server, sizeof( buffer ) );
 	server = buffer;
 
-	// skip leading "q3a:/" in connection string
-	if ( !Q_stricmpn( server, "q3a:/", 5 ) ) {
-		server += 5;
+	// skip leading "defrag:/" in connection string
+	if ( !Q_stricmpn( server, "defrag:/", 8 ) ) {
+		server += 8;
 	}
 
 	// skip all slash prefixes
@@ -2046,6 +2045,9 @@ static void CL_DownloadsComplete( void ) {
 	if ( clc.demofile == FS_INVALID_HANDLE ) {
 		Cmd_AddCommand( "callvote", NULL );
 		Cmd_SetCommandCompletionFunc( "callvote", CL_CompleteCallvote );
+		
+		Cmd_AddCommand( "cv", NULL );
+		Cmd_SetCommandCompletionFunc( "cv", CL_CompleteCallvote );
 	}
 
 	// set pure checksums
@@ -3210,7 +3212,7 @@ static void CL_InitRenderer( void ) {
 	Con_CheckResize();
 
 	g_console_field_width = ((cls.glconfig.vidWidth / smallchar_width)) - 2;
-	g_consoleField.widthInChars = g_console_field_width;
+	Con_ResetFieldWidth();
 
 	// for 640x480 virtualized screen
 	cls.biasY = 0;
@@ -3842,6 +3844,26 @@ static void CL_InitGLimp_Cvars( void )
 #endif
 }
 
+static qboolean CL_ModelNameCallback_f( const char *filename, int length )
+{
+	// <model_name>/icon_<skin_name>.<extension>
+	if ( length < 1 /*model name*/ + 6 + 1 /*skin name*/ ) 
+		return qfalse;
+
+	const char *slash = strrchr( filename, '/' );
+	return slash && !Q_stricmpn( slash + 1, "icon_", 5 );
+}
+
+static void CL_CompleteModelName( const char *args, int argNum )
+{
+	if( argNum == 2 )
+	{
+		FS_SetFilenameCallback( CL_ModelNameCallback_f );
+		Field_CompleteModelName();
+		FS_SetFilenameCallback( NULL );
+	}
+}
+
 
 /*
 ====================
@@ -3870,7 +3892,7 @@ void CL_Init( void ) {
 	//
 	cl_noprint = Cvar_Get( "cl_noprint", "0", 0 );
 	Cvar_SetDescription( cl_noprint, "Disable printing of information in the console." );
-	cl_motd = Cvar_Get( "cl_motd", "1", 0 );
+	cl_motd = Cvar_Get( "cl_motd", "0", 0 );
 	Cvar_SetDescription( cl_motd, "Toggle the display of the 'Message of the day'. When Quake 3 Arena starts a map up, it sends the GL_RENDERER string to the Message Of The Day server at id. This responds back with a message of the day to the client." );
 
 	cl_timeout = Cvar_Get( "cl_timeout", "200", 0 );
@@ -3881,7 +3903,7 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_autoNudge, "0", "1", CV_FLOAT );
 	Cvar_SetDescription( cl_autoNudge, "Automatic time nudge that uses your average ping as the time nudge, values:\n  0 - use fixed \\cl_timeNudge\n (0..1] - factor of median average ping to use as timenudge\n" );
 	cl_timeNudge = Cvar_Get( "cl_timeNudge", "0", CVAR_TEMP );
-	Cvar_CheckRange( cl_timeNudge, "-30", "30", CV_INTEGER );
+	Cvar_CheckRange( cl_timeNudge, "-250", "250", CV_INTEGER );
 	Cvar_SetDescription( cl_timeNudge, "Allows more or less latency to be added in the interest of better smoothness or better responsiveness." );
 
 	cl_shownet = Cvar_Get ("cl_shownet", "0", CVAR_TEMP );
@@ -3915,10 +3937,10 @@ void CL_Init( void ) {
 	rconAddress = Cvar_Get ("rconAddress", "", 0);
 	Cvar_SetDescription( rconAddress, "The IP address of the remote console you wish to connect to." );
 
-	cl_allowDownload = Cvar_Get( "cl_allowDownload", "1", CVAR_ARCHIVE_ND );
+	cl_allowDownload = Cvar_Get( "cl_allowDownload", "0", CVAR_ARCHIVE_ND );
 	Cvar_SetDescription( cl_allowDownload, "Enables downloading of content needed in server. Valid bitmask flags:\n 1: Downloading enabled\n 2: Do not use HTTP/FTP downloads\n 4: Do not use UDP downloads" );
 #ifdef USE_CURL
-	cl_mapAutoDownload = Cvar_Get( "cl_mapAutoDownload", "0", CVAR_ARCHIVE_ND );
+	cl_mapAutoDownload = Cvar_Get( "cl_mapAutoDownload", "1", CVAR_ARCHIVE );
 	Cvar_SetDescription( cl_mapAutoDownload, "Automatic map download for play and demo playback (via automatic \\dlmap call)." );
 #ifdef USE_CURL_DLOPEN
 	cl_cURLLib = Cvar_Get( "cl_cURLLib", DEFAULT_CURL_LIB, 0 );
@@ -3926,9 +3948,7 @@ void CL_Init( void ) {
 #endif
 #endif
 
-	cl_conXOffset = Cvar_Get ("cl_conXOffset", "0", 0);
-	Cvar_SetDescription( cl_conXOffset, "Console notifications X-offset." );
-	cl_conColor = Cvar_Get( "cl_conColor", "", 0 );
+	cl_conColor = Cvar_Get( "cl_conColor", "60 60 70 220", 0 );
 	Cvar_SetDescription( cl_conColor, "Console background color, set as R G B A values from 0-255, use with \\seta to save in config." );
 
 #ifdef MACOS_X
@@ -3959,22 +3979,22 @@ void CL_Init( void ) {
 	cl_guidServerUniq = Cvar_Get( "cl_guidServerUniq", "1", CVAR_ARCHIVE_ND );
 	Cvar_SetDescription( cl_guidServerUniq, "Makes cl_guid unique for each server." );
 
-	cl_dlURL = Cvar_Get( "cl_dlURL", "http://ws.q3df.org/maps/download/%1", CVAR_ARCHIVE_ND );
-	Cvar_SetDescription( cl_dlURL, "Cvar must point to download location." );
+	dl_source = Cvar_Get( "dl_source", "http://ws.q3df.org/getpk3bymapname.php/%m", CVAR_ARCHIVE );
+	Cvar_SetDescription( dl_source, "Cvar must point to download location." );
 
-	cl_dlDirectory = Cvar_Get( "cl_dlDirectory", "0", CVAR_ARCHIVE_ND );
-	Cvar_CheckRange( cl_dlDirectory, "0", "1", CV_INTEGER );
+	dl_usebaseq3 = Cvar_Get( "dl_usebaseq3", "0", CVAR_ARCHIVE_ND );
+	Cvar_CheckRange( dl_usebaseq3, "0", "1", CV_INTEGER );
 	s = va( "Save downloads initiated by \\dlmap and \\download commands in:\n"
 		" 0 - current game directory\n"
 		" 1 - basegame (%s) directory\n", FS_GetBaseGameDir() );
-	Cvar_SetDescription( cl_dlDirectory, s );
+	Cvar_SetDescription( dl_usebaseq3, s );
 
 	cl_reconnectArgs = Cvar_Get( "cl_reconnectArgs", "", CVAR_ARCHIVE_ND | CVAR_NOTABCOMPLETE );
 
 	// userinfo
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
-	Cvar_Get ("snaps", "40", CVAR_USERINFO | CVAR_ARCHIVE );
+	Cvar_Get ("snaps", "125", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
 	Cvar_Get ("headmodel", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
  	Cvar_Get ("team_model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE_ND );
@@ -4024,6 +4044,7 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("fs_openedList", CL_OpenedPK3List_f );
 	Cmd_AddCommand ("fs_referencedList", CL_ReferencedPK3List_f );
 	Cmd_AddCommand ("model", CL_SetModel_f );
+	Cmd_SetCommandCompletionFunc( "model", CL_CompleteModelName );
 	Cmd_AddCommand ("video", CL_Video_f );
 	Cmd_AddCommand ("video-pipe", CL_Video_f );
 	Cmd_SetCommandCompletionFunc( "video", CL_CompleteVideoName );
@@ -5020,9 +5041,9 @@ qboolean CL_Download( const char *cmd, const char *pakname, qboolean autoDownloa
 	char name[MAX_CVAR_VALUE_STRING];
 	const char *s;
 
-	if ( cl_dlURL->string[0] == '\0' )
+	if ( dl_source->string[0] == '\0' )
 	{
-		Com_Printf( S_COLOR_YELLOW "cl_dlURL cvar is not set\n" );
+		Com_Printf( S_COLOR_YELLOW "dl_source cvar is not set\n" );
 		return qfalse;
 	}
 
@@ -5055,7 +5076,7 @@ qboolean CL_Download( const char *cmd, const char *pakname, qboolean autoDownloa
 		}
 	}
 
-	return Com_DL_Begin( &download, pakname, cl_dlURL->string, autoDownload );
+	return Com_DL_Begin( &download, pakname, dl_source->string, autoDownload );
 }
 
 

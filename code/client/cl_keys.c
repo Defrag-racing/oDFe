@@ -403,16 +403,26 @@ static void Console_Key( int key ) {
 			g_consoleField.cursor++;
 		}
 
-		Com_Printf( "]%s\n", g_consoleField.buffer );
-
 		// leading slash is an explicit command
 		if ( g_consoleField.buffer[0] == '\\' || g_consoleField.buffer[0] == '/' ) {
+			Com_Printf( "]\\%s\n", g_consoleField.buffer+1 );
 			Cbuf_AddText( g_consoleField.buffer+1 );	// valid command
 			Cbuf_AddText( "\n" );
 		} else {
 			// other text will be chat messages
 			if ( !g_consoleField.buffer[0] ) {
+				Com_Printf( "]\n" );
 				return;	// empty lines just scroll the console without adding to history
+			} else if ( keys[K_CTRL].down && keys[K_SHIFT].down ) {
+				Cbuf_AddText( "cmd tell " );
+				Cbuf_AddText( Cvar_VariableString("df_mp_TrackPlayerNum") ); // this is useful because chs info 192 displays the name of the player with that id
+				Cbuf_AddText( " " );
+				Cbuf_AddText( g_consoleField.buffer );
+				Cbuf_AddText( "\n" );
+			} else if ( keys[K_CTRL].down ) {
+				Cbuf_AddText( "cmd say_team " );
+				Cbuf_AddText( g_consoleField.buffer );
+				Cbuf_AddText( "\n" );
 			} else {
 				Cbuf_AddText( "cmd say " );
 				Cbuf_AddText( g_consoleField.buffer );
@@ -424,7 +434,7 @@ static void Console_Key( int key ) {
 		Con_SaveField( &g_consoleField );
 
 		Field_Clear( &g_consoleField );
-		g_consoleField.widthInChars = g_console_field_width;
+		Con_ResetFieldWidth();
 
 		if ( cls.state == CA_DISCONNECTED ) {
 			SCR_UpdateScreen ();	// force an update, because the command
@@ -444,14 +454,14 @@ static void Console_Key( int key ) {
 	if ( (key == K_MWHEELUP && keys[K_SHIFT].down) || ( key == K_UPARROW ) || ( key == K_KP_UPARROW ) ||
 		 ( ( tolower(key) == 'p' ) && keys[K_CTRL].down ) ) {
 		Con_HistoryGetPrev( &g_consoleField );
-		g_consoleField.widthInChars = g_console_field_width;
+		Con_ResetFieldWidth();
 		return;
 	}
 
 	if ( (key == K_MWHEELDOWN && keys[K_SHIFT].down) || ( key == K_DOWNARROW ) || ( key == K_KP_DOWNARROW ) ||
 		 ( ( tolower(key) == 'n' ) && keys[K_CTRL].down ) ) {
 		Con_HistoryGetNext( &g_consoleField );
-		g_consoleField.widthInChars = g_console_field_width;
+		Con_ResetFieldWidth();
 		return;
 	}
 

@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "server.h"
 
+cvar_t	*sv_noReferencedPaks;
 
 /*
 ===============
@@ -616,20 +617,25 @@ void SV_SpawnServer( const char *mapname, qboolean killBots ) {
 	FS_TouchFileInPak( "vm/cgame.qvm" );
 	FS_TouchFileInPak( "vm/ui.qvm" );
 
-	// the server sends these to the clients so they can figure
-	// out which pk3s should be auto-downloaded
-	p = FS_ReferencedPakNames();
-	if ( FS_ExcludeReference() ) {
-		// \fs_excludeReference may mask our current ui/cgame qvms
-		FS_TouchFileInPak( "vm/cgame.qvm" );
-		FS_TouchFileInPak( "vm/ui.qvm" );
-		// rebuild referenced paks list
+	if (sv_noReferencedPaks->integer) {
+		Cvar_Set( "sv_referencedPakNames", "" );
+		Cvar_Set( "sv_referencedPaks", "" );
+	} else {
+		// the server sends these to the clients so they can figure
+		// out which pk3s should be auto-downloaded
 		p = FS_ReferencedPakNames();
-	}
-	Cvar_Set( "sv_referencedPakNames", p );
+		if ( FS_ExcludeReference() ) {
+			// \fs_excludeReference may mask our current ui/cgame qvms
+			FS_TouchFileInPak( "vm/cgame.qvm" );
+			FS_TouchFileInPak( "vm/ui.qvm" );
+			// rebuild referenced paks list
+			p = FS_ReferencedPakNames();
+		}
+		Cvar_Set( "sv_referencedPakNames", p );
 
-	p = FS_ReferencedPakChecksums();
-	Cvar_Set( "sv_referencedPaks", p );
+		p = FS_ReferencedPakChecksums();
+		Cvar_Set( "sv_referencedPaks", p );
+	}
 
 	Cvar_Set( "sv_paks", "" );
 	Cvar_Set( "sv_pakNames", "" ); // not used on client-side
@@ -753,13 +759,14 @@ void SV_Init( void )
 	Cvar_Get( "sv_referencedPaks", "", CVAR_SYSTEMINFO | CVAR_ROM );
 	sv_referencedPakNames = Cvar_Get( "sv_referencedPakNames", "", CVAR_SYSTEMINFO | CVAR_ROM );
 	Cvar_SetDescription( sv_referencedPakNames, "Variable holds a list of all the pk3 files the server loaded data from." );
+	sv_noReferencedPaks = Cvar_Get( "sv_noReferencedPaks", "1", CVAR_ARCHIVE_ND );
 
 	// server vars
 	sv_rconPassword = Cvar_Get ("rconPassword", "", CVAR_TEMP );
 	Cvar_SetDescription( sv_rconPassword, "Password for remote server commands." );
 	sv_privatePassword = Cvar_Get ("sv_privatePassword", "", CVAR_TEMP );
 	Cvar_SetDescription( sv_privatePassword, "Set password for private clients to login with." );
-	sv_fps = Cvar_Get ("sv_fps", "20", CVAR_TEMP );
+	sv_fps = Cvar_Get ("sv_fps", "125", CVAR_TEMP );
 	Cvar_CheckRange( sv_fps, "10", "125", CV_INTEGER );
 	Cvar_SetDescription( sv_fps, "Set the max frames per second the server sends the client." );
 	sv_timeout = Cvar_Get( "sv_timeout", "200", CVAR_TEMP );
@@ -800,7 +807,7 @@ void SV_Init( void )
 	Cvar_SetDescription( sv_banFile, "Name of the file that is used for storing the server bans." );
 #endif
 
-	sv_levelTimeReset = Cvar_Get( "sv_levelTimeReset", "0", CVAR_ARCHIVE_ND );
+	sv_levelTimeReset = Cvar_Get( "sv_levelTimeReset", "1", CVAR_ARCHIVE_ND );
 	Cvar_SetDescription( sv_levelTimeReset, "Whether or not to reset leveltime after new map loads." );
 
 	sv_filter = Cvar_Get( "sv_filter", "filter.txt", CVAR_ARCHIVE );

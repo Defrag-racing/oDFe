@@ -67,7 +67,7 @@ jobs:
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       run: |
         make clean ARCH=${{ matrix.arch }}
-        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=quake3e-vulkan BUILD_SERVER=0
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
         make clean ARCH=${{ matrix.arch }}
         make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
@@ -115,21 +115,21 @@ jobs:
       run: |
         mkdir bin
 
-        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=quake3e.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
-        copy code\win32\msvc2017\output\quake3e.ded.exe bin\quake3e.ded${{ matrix.suffix }}.exe
-        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=quake3e.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
+        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=oDFe.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
+        copy code\win32\msvc2017\output\oDFe.ded.exe bin\oDFe.ded${{ matrix.suffix }}.exe
+        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=oDFe.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
 
         msbuild code\win32\msvc2017\renderer.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=quake3e,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
-        copy code\win32\msvc2017\output\quake3e.exe bin\quake3e${{ matrix.suffix }}.exe
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
+        copy code\win32\msvc2017\output\oDFe.exe bin\oDFe${{ matrix.suffix }}.exe
         msbuild code\win32\msvc2017\renderer.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=quake3e,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
 
         msbuild code\win32\msvc2017\renderervk.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=quake3e,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
-        copy code\win32\msvc2017\output\quake3e.exe bin\quake3e-vulkan${{ matrix.suffix }}.exe
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
+        copy code\win32\msvc2017\output\oDFe.exe bin\oDFe.vk${{ matrix.suffix }}.exe
         msbuild code\win32\msvc2017\renderervk.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=quake3e,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
 
     - uses: actions/upload-artifact@v4
       if: ${{ matrix.btype == 'release' }}
@@ -169,10 +169,10 @@ jobs:
         if [ ${{ matrix.arch }} == "x86" ]; then
           sudo dpkg --add-architecture i386
           sudo apt-get -qq update
-          sudo apt-get -y install gcc-multilib libcurl4-openssl-dev:i386 mesa-common-dev:i386 libxxf86dga-dev:i386 libxrandr-dev:i386 libxxf86vm-dev:i386 libasound-dev:i386
+          sudo apt-get -y install gcc-multilib libcurl4-openssl-dev:i386 mesa-common-dev:i386 libxxf86dga-dev:i386 libxrandr-dev:i386 libxxf86vm-dev:i386 libasound-dev:i386 libpcre2-dev:i386
         else
           sudo apt-get -qq update
-          sudo apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libsdl2-dev
+          sudo apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libsdl2-dev libpcre2-dev
         fi
 
     - uses: actions/checkout@v4
@@ -182,7 +182,7 @@ jobs:
     - name: Build
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip in Release builds
       run: |
-        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=quake3e-vulkan BUILD_SERVER=0
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
         make clean ARCH=${{ matrix.arch }} 
         make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
@@ -229,8 +229,8 @@ jobs:
         run: |
           apt-get -qq update
           apt-get install -y make gcc g++
-          apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev
-          make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=quake3e-vulkan BUILD_SERVER=0
+          apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libpcre2-dev
+          make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
           make clean ARCH=${{ matrix.arch }} 
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
@@ -245,7 +245,7 @@ jobs:
 
   macos-x86:
     name: ${{ matrix.btype }} macOS ${{ matrix.arch }}
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -253,6 +253,12 @@ jobs:
         cc: [clang]
         btype: [Release, Debug]
         include:
+          - arch: x86_64
+            os: macos-13
+
+          - arch: aarch64
+            os: macos-latest
+
           - btype: Release
             rule: install
 
@@ -262,7 +268,7 @@ jobs:
     steps:
 
     - name: Install tools
-      run: brew install coreutils sdl2 # pkg-config
+      run: brew install coreutils sdl2 # pkg-config pcre2
 
     - uses: actions/checkout@v4
       with:
@@ -271,7 +277,7 @@ jobs:
     - name: Build
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       run: |
-        make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=quake3e-vulkan BUILD_SERVER=0 STRIP=echo
+        make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0 STRIP=echo
         make clean ARCH=${{ matrix.arch }} 
         make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl STRIP=echo
 
@@ -293,17 +299,17 @@ jobs:
 
       - name: Create binary archives
         run: |
-          7z a -r quake3e-linux-x86.zip            ./linux-x86/*
-          7z a -r quake3e-linux-x86_64.zip         ./linux-x86_64/*
-          7z a -r quake3e-windows-mingw-x86.zip    ./windows-mingw-x86/*
-          7z a -r quake3e-windows-mingw-x86_64.zip ./windows-mingw-x86_64/*
-          7z a -r quake3e-windows-msvc-x86.zip     ./windows-msvc-x86/*
-          7z a -r quake3e-windows-msvc-x86_64.zip  ./windows-msvc-x86_64/*
-          7z a -r quake3e-windows-msvc-arm64.zip   ./windows-msvc-arm64/*
-          7z a -r quake3e-macos-x86_64.zip         ./macos-x86_64/*
-          7z a -r quake3e-macos-aarch64.zip        ./macos-aarch64/*
-#         7z a -r quake3e-linux-aarch64.zip        ./linux-aarch64/*
-#         7z a -r quake3e-linux-armv7.zip          ./linux-armv7/*
+          7z a -r oDFe-linux-x86.zip      ./linux-x86/*
+          7z a -r oDFe-linux-x86_64.zip   ./linux-x86_64/*
+          7z a -r oDFe-windows-x86.zip    ./windows-mingw-x86/*
+          7z a -r oDFe-windows-x86_64.zip ./windows-mingw-x86_64/*
+          7z a -r oDFe-macos-x86_64.zip   ./macos-x86_64/*
+          7z a -r oDFe-other.zip          windows-msvc-x86/
+          7z a -r oDFe-other.zip          windows-msvc-x86_64/
+          7z a -r oDFe-other.zip          windows-msvc-arm64/
+          7z a -r oDFe-other.zip          macos-aarch64/
+#         7z a -r oDFe-other.zip          linux-aarch64/
+#         7z a -r oDFe-other.zip          linux-armv7/
 
       - name: Create latest build
         uses: czietz/action-automatic-releases@latest
@@ -323,48 +329,30 @@ jobs:
     strategy:
       matrix:
         include:
-#         - artifact_dir: linux-aarch64
-#           artifact_name: quake3e-linux-aarch64.zip
+          - artifacts: ./linux-x86/*
+            artifact_name: oDFe-linux-x86.zip
 
-#         - artifact_dir: linux-armv7
-#           artifact_name: quake3e-linux-armv7.zip
+          - artifacts: ./linux-x86_64/*
+            artifact_name: oDFe-linux-x86_64.zip
 
-          - artifact_dir: linux-x86
-            artifact_name: quake3e-linux-x86.zip
+          - artifacts: ./windows-mingw-x86/*
+            artifact_name: oDFe-windows-x86.zip
 
-          - artifact_dir: linux-x86_64
-            artifact_name: quake3e-linux-x86_64.zip
+          - artifacts: ./windows-mingw-x86_64/*
+            artifact_name: oDFe-windows-x86_64.zip
 
-          - artifact_dir: windows-mingw-x86
-#           artifact_name: quake3e-windows-mingw-x86.zip
-            artifact_name: quake3e-windows-x86.zip 
+          - artifacts: ./macos-x86_64/*
+            artifact_name: oDFe-macos-x86_64.zip
 
-          - artifact_dir: windows-mingw-x86_64
-#           artifact_name: quake3e-windows-mingw-x86_64.zip
-            artifact_name: quake3e-windows-x86_64.zip
-
-#         - artifact_dir: windows-msvc-x86
-#           artifact_name: quake3e-windows-msvc-x86.zip
-
-#         - artifact_dir: windows-msvc-x86_64
-#           artifact_name: quake3e-windows-msvc-x86_64.zip
-
-          - artifact_dir: windows-msvc-arm64
-#           artifact_name: quake3e-windows-msvc-arm64.zip
-            artifact_name: quake3e-windows-arm64.zip
-
-          - artifact_dir: macos-x86_64
-            artifact_name: quake3e-macos-x86_64.zip
-
-          - artifact_dir: macos-aarch64
-            artifact_name: quake3e-macos-aarch64.zip
+          - artifacts: windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ macos-aarch64/ # linux-aarch64/ linux-armv7/
+            artifact_name: oDFe-other.zip
 
     steps:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
 
       - name: Create archive
-        run: 7z a -r ${{ matrix.artifact_name }} ./${{ matrix.artifact_dir }}/*
+        run: 7z a -r ${{ matrix.artifact_name }} ${{ matrix.artifacts }}
 
       - name: Upload archive
         uses: "svenstaro/upload-release-action@latest"

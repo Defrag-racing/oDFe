@@ -1250,7 +1250,7 @@ static void R_Register( void )
 	ri.Cvar_SetDescription( r_mapOverBrightBits, "Sets the number of overbright bits baked into all lightmaps and map data." );
 	r_intensity = ri.Cvar_Get ("r_intensity", "1", CVAR_LATCH );
 	ri.Cvar_SetDescription( r_intensity, "Global texture lighting scale." );
-	r_singleShader = ri.Cvar_Get ("r_singleShader", "0", CVAR_CHEAT | CVAR_LATCH );
+	r_singleShader = ri.Cvar_Get( "r_singleShader", "0", CVAR_LATCH ); // CVAR_CHEAT
 	ri.Cvar_SetDescription( r_singleShader, "Debugging tool that only uses the default shader for all rendering." );
 
 	//
@@ -1427,6 +1427,12 @@ static void R_ShutDownQueries(void)
 static void RE_SyncRender( void )
 {
 
+}
+
+
+static const cplane_t *RE_GetFrustum( void )
+{
+	return tr.viewParms.frustum;
 }
 
 
@@ -1672,6 +1678,8 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.GetConfig = RE_GetConfig;
 	re.VertexLighting = RE_VertexLighting;
 	re.SyncRender = RE_SyncRender;
+
+	re.GetFrustum = RE_GetFrustum;
 
 	return &re;
 }

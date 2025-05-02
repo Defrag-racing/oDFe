@@ -45,8 +45,8 @@ const int demo_protocols[] = { 66, 67, OLD_PROTOCOL_VERSION, NEW_PROTOCOL_VERSIO
 #define MIN_COMHUNKMEGS		48
 #define DEF_COMHUNKMEGS		56
 #else
-#define MIN_COMHUNKMEGS		64
-#define DEF_COMHUNKMEGS		128
+#define MIN_COMHUNKMEGS		128
+#define DEF_COMHUNKMEGS		512
 #endif
 
 #ifdef USE_MULTI_SEGMENT
@@ -3922,9 +3922,9 @@ void Com_Init( char *commandLine ) {
 	Cvar_Get( "com_errorMessage", "", CVAR_ROM | CVAR_NORESTART );
 
 #ifndef DEDICATED
-	com_introPlayed = Cvar_Get( "com_introplayed", "0", CVAR_ARCHIVE );
+	com_introPlayed = Cvar_Get( "com_introplayed", "1", CVAR_ARCHIVE );
 	Cvar_SetDescription( com_introPlayed, "Skips the introduction cinematic." );
-	com_skipIdLogo  = Cvar_Get( "com_skipIdLogo", "0", CVAR_ARCHIVE );
+	com_skipIdLogo  = Cvar_Get( "com_skipIdLogo", "1", CVAR_ARCHIVE );
 	Cvar_SetDescription( com_skipIdLogo, "Skip playing Id Software logo cinematic at startup." );
 #endif
 
@@ -4530,6 +4530,42 @@ static void FindMatches( const char *s ) {
 }
 
 
+static void ExtractModelSkin( const char *s, char *modelSkin, int size) {
+	assert( s && modelSkin );
+	if ( strlen( s ) - 5 < size ) {
+		// model name
+		char *slash = strrchr( s, '/' );
+		assert(slash);
+		while ( s < slash ) {
+			*modelSkin++ = *s++;
+		}
+		assert( !Q_stricmpn( s, "/icon_", 6 ) );
+		s += 6;
+		if ( Q_stricmpn( s, "default", 7 ) )
+		{
+			// skin name
+			*modelSkin++ = '/';
+			while ( *s ) {
+				*modelSkin++ = *s++;
+			}
+		}
+	}
+	*modelSkin = '\0';
+}
+
+
+/*
+===============
+FindModelMatches
+===============
+*/
+static void FindModelMatches( const char *s ) {
+	char modelSkin[ MAX_QPATH ];
+	ExtractModelSkin( s, modelSkin, sizeof( modelSkin ) );
+	FindMatches( modelSkin );
+}
+
+
 /*
 ===============
 PrintMatches
@@ -4554,6 +4590,18 @@ static void PrintCvarMatches( const char *s ) {
 		Com_TruncateLongString( value, Cvar_VariableString( s ) );
 		Com_Printf( "    %s = \"%s\"\n", s, value );
 	}
+}
+
+
+/*
+===============
+PrintModelMatches
+===============
+*/
+static void PrintModelMatches( const char *s ) {
+	char modelSkin[ MAX_QPATH ];
+	ExtractModelSkin( s, modelSkin, sizeof( modelSkin ) );
+	PrintMatches( modelSkin );
 }
 
 
@@ -4743,6 +4791,28 @@ void Field_CompleteFilename( const char *dir, const char *ext, qboolean stripExt
 
 	if ( !Field_Complete() )
 		FS_FilenameCompletion( dir, ext, stripExt, PrintMatches, flags );
+}
+
+
+/*
+===============
+Field_CompleteModelName
+===============
+*/
+void Field_CompleteModelName( void )
+{
+	matchCount = 0;
+	shortestMatch[ 0 ] = '\0';
+
+	char const* dir = "models/players";
+	char const* ext = "";
+	qboolean const stripExt = qtrue;
+	int const flags = FS_MATCH_ANY | FS_MATCH_STICK;
+
+	FS_FilenameCompletion( dir, ext, stripExt, FindModelMatches, flags );
+
+	if ( !Field_Complete() )
+		FS_FilenameCompletion( dir, ext, stripExt, PrintModelMatches, flags );
 }
 
 

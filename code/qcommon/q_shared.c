@@ -1681,7 +1681,29 @@ char *Q_CleanStr( char *string ) {
 		if ( Q_IsColorString( s ) ) {
 			s++;
 		}		
-		else if ( c >= 0x20 && c <= 0x7E ) {
+		else if ( Q_isprint( c ) ) {
+			*d++ = c;
+		}
+		s++;
+	}
+	*d = '\0';
+
+	return string;
+}
+
+
+char *Q_DecolorStr( char *string ) {
+	char*	d;
+	char*	s;
+	int		c;
+
+	s = string;
+	d = string;
+	while ( (c = *s) != 0 ) {
+		if ( Q_IsColorString( s ) ) {
+			s++;
+		}
+		else {
 			*d++ = c;
 		}
 		s++;

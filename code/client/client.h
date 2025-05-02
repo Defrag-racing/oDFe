@@ -83,7 +83,7 @@ typedef struct {
 
 // the parseEntities array must be large enough to hold PACKET_BACKUP frames of
 // entities, so that when a delta compressed message arives from the server
-// it can be un-deltad from the original 
+// it can be un-deltad from the original
 #define	MAX_PARSE_ENTITIES	( PACKET_BACKUP * MAX_SNAPSHOT_ENTITIES )
 
 extern int g_console_field_width;
@@ -403,9 +403,8 @@ extern	cvar_t	*cl_activeAction;
 extern	cvar_t	*cl_allowDownload;
 #ifdef USE_CURL
 extern	cvar_t	*cl_mapAutoDownload;
-extern	cvar_t	*cl_dlDirectory;
+extern	cvar_t	*dl_usebaseq3;
 #endif
-extern	cvar_t	*cl_conXOffset;
 extern	cvar_t	*cl_conColor;
 extern	cvar_t	*cl_inGameVideo;
 
@@ -504,6 +503,7 @@ qboolean CL_ValidPakSignature( const byte *data, int len );
 extern cvar_t *con_scale;
 
 void Con_CheckResize( void );
+void Con_ResetFieldWidth( void );
 void Con_Init( void );
 void Con_Shutdown( void );
 void Con_ToggleConsole_f( void );
@@ -531,7 +531,7 @@ void	SCR_DebugGraph( float value );
 int		SCR_GetBigStringWidth( const char *str );	// returns in virtual 640x480 coordinates
 
 void	SCR_AdjustFrom640( float *x, float *y, float *w, float *h );
-void	SCR_FillRect( float x, float y, float width, float height, 
+void	SCR_FillRect( float x, float y, float width, float height,
 					 const float *color );
 void	SCR_DrawPic( float x, float y, float width, float height, qhandle_t hShader );
 void	SCR_DrawNamedPic( float x, float y, float width, float height, const char *picname );
@@ -592,6 +592,12 @@ void CL_WriteAVIVideoFrame( const byte *imageBuffer, int size );
 void CL_WriteAVIAudioFrame( const byte *pcmBuffer, int size );
 qboolean CL_CloseAVI( qboolean reopen );
 qboolean CL_VideoRecording( void );
+
+//
+// cl_tc_vis.c
+//
+void tc_vis_init(void);
+void tc_vis_render(void);
 
 //
 // cl_jpeg.c
