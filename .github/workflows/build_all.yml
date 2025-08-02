@@ -63,6 +63,7 @@ jobs:
         retention-days: 5
 
   windows_msvc:
+    if: false # TODO: support windows-latest
     name: ${{ matrix.config }} Windows ${{ matrix.arch }} (Vulkan=${{ matrix.vulkan }}, MSVC)
     # windows-2019: build tools for Visual Studio 2017 (Platform Toolset = v141)
     # https://github.com/actions/runner-images/blob/main/images/windows/Windows2019-Readme.md

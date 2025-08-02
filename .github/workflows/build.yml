@@ -78,6 +78,7 @@ jobs:
         retention-days: 5
 
   windows-msvc:
+    if: false # TODO: support windows-latest
     name: ${{ matrix.btype }} Windows-MSVC ${{ matrix.arch }}
     # windows-2019: build tools for Visual Studio 2017 (Platform Toolset = v141)
     # https://github.com/actions/runner-images/blob/main/images/windows/Windows2019-Readme.md
@@ -291,7 +292,7 @@ jobs:
 
   create-testing:
     if: github.ref == 'refs/heads/master' && github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [windows-msys, windows-msvc, ubuntu-x86, ubuntu-arm, macos-x86]
+    needs: [windows-msys, ubuntu-x86, ubuntu-arm, macos-x86] # windows-msvc
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts
@@ -304,12 +305,12 @@ jobs:
           7z a -r oDFe-macos-aarch64.zip  ./macos-aarch64/*
           7z a -r oDFe-other.zip          linux-x86/
           7z a -r oDFe-other.zip          windows-mingw-x86/
-          7z a -r oDFe-other.zip          windows-msvc-x86/
-          7z a -r oDFe-other.zip          windows-msvc-x86_64/
-          7z a -r oDFe-other.zip          windows-msvc-arm64/
           7z a -r oDFe-other.zip          macos-x86_64/
-#         7z a -r oDFe-other.zip          linux-aarch64/
-#         7z a -r oDFe-other.zip          linux-armv7/
+          # 7z a -r oDFe-other.zip          windows-msvc-x86/
+          # 7z a -r oDFe-other.zip          windows-msvc-x86_64/
+          # 7z a -r oDFe-other.zip          windows-msvc-arm64/
+          # 7z a -r oDFe-other.zip          linux-aarch64/
+          # 7z a -r oDFe-other.zip          linux-armv7/
 
       - name: Create latest build
         uses: czietz/action-automatic-releases@latest
@@ -323,7 +324,7 @@ jobs:
 
   update-release:
     if: ${{ github.event_name == 'release' }}
-    needs: [windows-msys, windows-msvc, ubuntu-x86, ubuntu-arm, macos-x86]
+    needs: [windows-msys, ubuntu-x86, ubuntu-arm, macos-x86] # windows-msvc
     runs-on: ubuntu-latest
 
     strategy:
@@ -338,7 +339,7 @@ jobs:
           - artifacts: ./macos-aarch64/*
             artifact_name: oDFe-macos-aarch64.zip
 
-          - artifacts: linux-x86/ windows-mingw-x86/ windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ macos-x86_64/ # linux-aarch64/ linux-armv7/
+          - artifacts: linux-x86/ windows-mingw-x86/ macos-x86_64/ # windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ linux-aarch64/ linux-armv7/
             artifact_name: oDFe-other.zip
 
     steps:
