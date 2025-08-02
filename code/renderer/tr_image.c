@@ -601,9 +601,9 @@ Upload32
 static void Upload32( byte *data, int x, int y, int width, int height, image_t *image, qboolean subImage )
 {
 	qboolean allowCompression = !(image->flags & IMGFLAG_NO_COMPRESSION);
-	qboolean lightMap = image->flags & IMGFLAG_LIGHTMAP;
-	qboolean mipmap = image->flags & IMGFLAG_MIPMAP;
-	qboolean picmip = image->flags & IMGFLAG_PICMIP;
+	qboolean lightMap = (image->flags & IMGFLAG_LIGHTMAP) ? qtrue : qfalse;
+	qboolean mipmap = (image->flags & IMGFLAG_MIPMAP) ? qtrue : qfalse;
+	qboolean picmip = (image->flags & IMGFLAG_PICMIP) ? qtrue : qfalse;
 	byte		*resampledBuffer = NULL;
 	int			scaled_width, scaled_height;
 
@@ -1485,11 +1485,14 @@ R_DeleteTextures
 ===============
 */
 void R_DeleteTextures( void ) {
-	image_t *img;
 	int i;
 
+	if ( tr.numImages == 0 ) {
+		return;
+	}
+
 	for ( i = 0; i < tr.numImages; i++ ) {
-		img = tr.images[ i ];
+		image_t *img = tr.images[ i ];
 		qglDeleteTextures( 1, &img->texnum );
 	}
 

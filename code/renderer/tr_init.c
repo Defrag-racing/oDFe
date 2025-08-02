@@ -1835,13 +1835,7 @@ void R_Init( void ) {
 	// init function tables
 	//
 	for ( i = 0; i < FUNCTABLE_SIZE; i++ ) {
-		if ( i == 0 ) {
-			tr.sinTable[i] = EPSILON;
-		} else if ( i == (FUNCTABLE_SIZE - 1) ) {
-			tr.sinTable[i] = -EPSILON;
-		} else {
-			tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / ((float)(FUNCTABLE_SIZE - 1)) ) );
-		}
+		tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / FUNCTABLE_SIZE ) + 0.0001f );
 		tr.squareTable[i] = (i < FUNCTABLE_SIZE / 2) ? 1.0f : -1.0f;
 		if ( i == 0 ) {
 			tr.sawToothTable[i] = EPSILON;
@@ -1921,10 +1915,10 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	ri.Cmd_RemoveCommand( "gfxinfo" );
 	ri.Cmd_RemoveCommand( "shaderstate" );
 
-	if ( tr.registered ) {
+	//if ( tr.registered ) {
 		//R_IssuePendingRenderCommands();
 		R_DeleteTextures();
-	}
+	//}
 
 	R_DoneFreeType();
 

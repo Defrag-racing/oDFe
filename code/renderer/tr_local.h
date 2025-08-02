@@ -311,7 +311,8 @@ typedef struct {
 	int				videoMapHandle;
 	int				lightmap;				// LIGHTMAP_INDEX_NONE, LIGHTMAP_INDEX_SHADER, LIGHTMAP_INDEX_OFFSET
 	qboolean		isVideoMap;
-	qboolean		isScreenMap;
+	unsigned int 	isScreenMap : 1;
+	unsigned int 	dlight : 1;
 } textureBundle_t;
 
 #define NUM_TEXTURE_BUNDLES 2
@@ -1452,6 +1453,8 @@ skin_t	*R_GetSkinByHandle( qhandle_t hSkin );
 int R_ComputeLOD( trRefEntity_t *ent );
 
 const void *RB_TakeVideoFrameCmd( const void *data );
+
+float R_ClampDenorm( float v );
 
 //
 // tr_shader.c

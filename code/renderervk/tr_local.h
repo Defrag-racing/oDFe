@@ -37,6 +37,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #define MAX_TEXTURE_SIZE	2048 // must be less or equal to 32768
 
+#define USE_BUFFER_CLEAR	/* clear attachments on render pass begin */
+
 //#define USE_TESS_NEEDS_NORMAL
 //#define USE_TESS_NEEDS_ST2
 
@@ -360,7 +362,8 @@ typedef struct {
 	int				videoMapHandle;
 	int				lightmap;				// LIGHTMAP_INDEX_NONE, LIGHTMAP_INDEX_SHADER, LIGHTMAP_INDEX_OFFSET
 	qboolean		isVideoMap;
-	qboolean		isScreenMap;
+	unsigned int 	isScreenMap : 1;
+	unsigned int 	dlight : 1;
 } textureBundle_t;
 
 #ifdef USE_VULKAN
@@ -1536,6 +1539,8 @@ skin_t	*R_GetSkinByHandle( qhandle_t hSkin );
 int R_ComputeLOD( trRefEntity_t *ent );
 
 const void *RB_TakeVideoFrameCmd( const void *data );
+
+float R_ClampDenorm( float v );
 
 //
 // tr_shader.c

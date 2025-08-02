@@ -1428,11 +1428,10 @@ static void VarInfo( void )
 	} else if ( glConfig.hardwareType == GLHW_RIVA128 ) {
 		ri.Printf( PRINT_ALL, "HACK: riva128 approximations\n" );
 	}
-
+#endif
 	if ( r_finish->integer ) {
 		ri.Printf( PRINT_ALL, "Forcing glFinish\n" );
 	}
-#endif
 }
 
 
@@ -1849,8 +1848,8 @@ void R_Init( void ) {
 	Com_Memset( &tess, 0, sizeof( tess ) );
 	Com_Memset( &glState, 0, sizeof( glState ) );
 
-	if (sizeof(glconfig_t) != 11332)
-		ri.Error( ERR_FATAL, "Mod ABI incompatible: sizeof(glconfig_t) == %u != 11332", (unsigned int) sizeof(glconfig_t));
+	if ( sizeof( glconfig_t ) != 11332 )
+		ri.Error( ERR_FATAL, "Mod ABI incompatible: sizeof(glconfig_t) == %u != 11332", (unsigned int) sizeof( glconfig_t ) );
 
 	if ( (intptr_t)tess.xyz & 15 ) {
 		ri.Printf( PRINT_WARNING, "tess.xyz not 16 byte aligned\n" );
@@ -1861,13 +1860,7 @@ void R_Init( void ) {
 	// init function tables
 	//
 	for ( i = 0; i < FUNCTABLE_SIZE; i++ ) {
-		if ( i == 0 ) {
-			tr.sinTable[i] = EPSILON;
-		} else if ( i == (FUNCTABLE_SIZE - 1) ) {
-			tr.sinTable[i] = -EPSILON;
-		} else {
-			tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / ((float)(FUNCTABLE_SIZE - 1)) ) );
-		}
+		tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / FUNCTABLE_SIZE ) + 0.0001f );
 		tr.squareTable[i] = (i < FUNCTABLE_SIZE / 2) ? 1.0f : -1.0f;
 		if ( i == 0 ) {
 			tr.sawToothTable[i] = EPSILON;
@@ -1962,13 +1955,14 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	ri.Cmd_RemoveCommand( "vkinfo" );
 #endif
 
-	if ( tr.registered ) {
+	//if ( tr.registered ) {
 		//R_IssuePendingRenderCommands();
 		R_DeleteTextures();
+	//}
+
 #ifdef USE_VULKAN
-		vk_release_resources();
+	vk_release_resources();
 #endif
-	}
 
 	R_DoneFreeType();
 
