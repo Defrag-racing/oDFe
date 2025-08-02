@@ -122,6 +122,7 @@ typedef struct {
 	void	(*SyncRender)( void );
 
 	const cplane_t *(*GetFrustum)( void );
+	void (*getcgamefov)( vec2_t *fov );
 
 } refexport_t;
 

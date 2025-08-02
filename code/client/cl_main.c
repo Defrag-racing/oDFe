@@ -4056,6 +4056,9 @@ void CL_Init( void ) {
 	Cmd_AddCommand( "download", CL_Download_f );
 	Cmd_AddCommand( "dlmap", CL_Download_f );
 #endif
+
+    HUD_Init (); // snap hud
+
 	Cmd_AddCommand( "modelist", CL_ModeList_f );
 
 	Cvar_Set( "cl_running", "1" );
