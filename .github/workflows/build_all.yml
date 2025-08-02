@@ -41,12 +41,12 @@ jobs:
         release: false
         update: false
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
     - name: Build
-      run: make ${{ matrix.rule }} -j 8
+      run: make ${{ matrix.rule }} -j$(nproc)
         ARCH=${{ matrix.arch }}
         BUILD_SERVER=0
         CC=${{ matrix.c }}
@@ -56,10 +56,10 @@ jobs:
         USE_SDL=0
         USE_VULKAN=${{ matrix.vulkan }}
 
-    - uses: actions/upload-artifact@v2
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+    - uses: actions/upload-artifact@v4
+      if: matrix.c == 'gcc' && matrix.config == 'Release' && matrix.vulkan == 1
       with:
-        name: windows
+        name: windows-${{ matrix.arch }}
         path: bin
         if-no-files-found: error
         retention-days: 5
@@ -94,7 +94,7 @@ jobs:
     steps:
     - uses: microsoft/setup-msbuild@v1.0.2
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
@@ -103,14 +103,14 @@ jobs:
         msbuild code/win32/msvc2017/${{ matrix.renderer }}.vcxproj -m -p:Configuration=${{ matrix.config }},Platform=${{ matrix.arch }}
         msbuild code/win32/msvc2017/quake3e.vcxproj -m -p:TargetName=${{ matrix.name }},Configuration=${{ matrix.config }},Platform=${{ matrix.arch }}
 
-    # - uses: actions/upload-artifact@v2
-    #   if: matrix.config == 'Release'
+    # - uses: actions/upload-artifact@v4
+    #   if: matrix.config == 'Release' && matrix.vulkan == 1
     #   with:
-    #     name: windows_msvc
+    #     name: windows-msvc-${{ matrix.arch }}
     #     path: code/win32/msvc2017/output/*.exe
     #     if-no-files-found: error
     #     retention-days: 5
-        
+
   ubuntu:
     name: ${{ matrix.config }} Ubuntu ${{ matrix.arch }} (Vulkan=${{ matrix.vulkan }}, ${{ matrix.c }})
     runs-on: ubuntu-latest
@@ -139,12 +139,12 @@ jobs:
           sudo apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libpcre2-dev
         fi
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
     - name: Build
-      run: make ${{ matrix.rule }} -j 8
+      run: make ${{ matrix.rule }} -j$(nproc)
         ARCH=${{ matrix.arch }}
         BUILD_SERVER=0
         CC=${{ matrix.c }}
@@ -153,24 +153,29 @@ jobs:
         USE_SDL=0
         USE_VULKAN=${{ matrix.vulkan }}
 
-    - uses: actions/upload-artifact@v2
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+    - uses: actions/upload-artifact@v4
+      if: matrix.c == 'gcc' && matrix.config == 'Release' && matrix.vulkan == 1
       with:
-        name: linux
+        name: linux-${{ matrix.arch }}
         path: bin
         if-no-files-found: error
         retention-days: 5
 
   macos:
-    name: ${{ matrix.config }} macOS x86_64 (Vulkan=${{ matrix.vulkan }}, ${{ matrix.c }})
-    runs-on: macos-latest
+    name: ${{ matrix.config }} macOS ${{ matrix.arch }} (Vulkan=${{ matrix.vulkan }}, ${{ matrix.c }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        arch: [aarch64, x86_64]
         c: [gcc, clang]
         config: [Debug, Release]
         vulkan: [0, 1]
         include:
+          - arch: aarch64
+            os: macos-latest
+          - arch: x86_64
+            os: macos-13
           - config: Debug
             rule: debug
           - config: Release
@@ -186,12 +191,12 @@ jobs:
       #  sudo cp -R "/Volumes/SDL2/SDL2.framework" /Library/Frameworks
       #  hdiutil unmount "/Volumes/SDL2"
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
 
     - name: Build
-      run: make ${{ matrix.rule }} -j 8
+      run: make ${{ matrix.rule }} -j$(nproc)
         BUILD_SERVER=0
         CC=${{ matrix.c }}
         DESTDIR=bin
@@ -199,10 +204,10 @@ jobs:
         USE_RENDERER_DLOPEN=0
         USE_VULKAN=${{ matrix.vulkan }}
 
-    - uses: actions/upload-artifact@v2
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+    - uses: actions/upload-artifact@v4
+      if: matrix.c == 'gcc' && matrix.config == 'Release' && matrix.vulkan == 1
       with:
-        name: macos
+        name: macos-${{ matrix.arch }}
         path: bin
         if-no-files-found: error
         retention-days: 5

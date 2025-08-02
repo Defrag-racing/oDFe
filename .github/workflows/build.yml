@@ -23,7 +23,7 @@ on:
 jobs:
   windows-msys:
     name: ${{ matrix.btype }} Windows-GCC ${{ matrix.arch }}
-    runs-on: windows-2019
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +81,7 @@ jobs:
 
   windows-msvc:
     name: ${{ matrix.btype }} Windows-MSVC ${{ matrix.arch }}
-    runs-on: windows-2019
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
@@ -138,10 +138,10 @@ jobs:
         path: bin
         if-no-files-found: error
         retention-days: 5
-        
+
   ubuntu-x86:
     name: ${{ matrix.btype }} Ubuntu ${{ matrix.arch }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -183,7 +183,7 @@ jobs:
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip in Release builds
       run: |
         make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
-        make clean ARCH=${{ matrix.arch }} 
+        make clean ARCH=${{ matrix.arch }}
         make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
@@ -196,7 +196,7 @@ jobs:
 
   ubuntu-arm:
     name: ${{ matrix.btype }} Ubuntu [ARM] ${{ matrix.arch }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -220,10 +220,10 @@ jobs:
     - name: Build ${{ matrix.arch }}
       #if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       if: false
-      uses: uraimo/run-on-arch-action@v2
+      uses: uraimo/run-on-arch-action@v3
       with:
         arch: ${{ matrix.arch }}
-        distro: ubuntu24.04
+        distro: ubuntu_latest
         githubToken: ${{ github.token }}
         shell: /bin/sh
         run: |
@@ -231,7 +231,7 @@ jobs:
           apt-get install -y make gcc g++
           apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libpcre2-dev
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
-          make clean ARCH=${{ matrix.arch }} 
+          make clean ARCH=${{ matrix.arch }}
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
@@ -249,15 +249,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64, aarch64]
+        arch: [aarch64, x86_64]
         cc: [clang]
         btype: [Release, Debug]
         include:
-          - arch: x86_64
-            os: macos-13
-
           - arch: aarch64
             os: macos-latest
+
+          - arch: x86_64
+            os: macos-13
 
           - btype: Release
             rule: install
@@ -278,7 +278,7 @@ jobs:
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       run: |
         make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0 STRIP=echo
-        make clean ARCH=${{ matrix.arch }} 
+        make clean ARCH=${{ matrix.arch }}
         make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl STRIP=echo
 
     - uses: actions/upload-artifact@v4
@@ -299,15 +299,15 @@ jobs:
 
       - name: Create binary archives
         run: |
-          7z a -r oDFe-linux-x86.zip      ./linux-x86/*
           7z a -r oDFe-linux-x86_64.zip   ./linux-x86_64/*
-          7z a -r oDFe-windows-x86.zip    ./windows-mingw-x86/*
           7z a -r oDFe-windows-x86_64.zip ./windows-mingw-x86_64/*
-          7z a -r oDFe-macos-x86_64.zip   ./macos-x86_64/*
+          7z a -r oDFe-macos-aarch64.zip  ./macos-aarch64/*
+          7z a -r oDFe-other.zip          linux-x86/
+          7z a -r oDFe-other.zip          windows-mingw-x86/
           7z a -r oDFe-other.zip          windows-msvc-x86/
           7z a -r oDFe-other.zip          windows-msvc-x86_64/
           7z a -r oDFe-other.zip          windows-msvc-arm64/
-          7z a -r oDFe-other.zip          macos-aarch64/
+          7z a -r oDFe-other.zip          macos-x86_64/
 #         7z a -r oDFe-other.zip          linux-aarch64/
 #         7z a -r oDFe-other.zip          linux-armv7/
 
@@ -329,22 +329,16 @@ jobs:
     strategy:
       matrix:
         include:
-          - artifacts: ./linux-x86/*
-            artifact_name: oDFe-linux-x86.zip
-
           - artifacts: ./linux-x86_64/*
             artifact_name: oDFe-linux-x86_64.zip
-
-          - artifacts: ./windows-mingw-x86/*
-            artifact_name: oDFe-windows-x86.zip
 
           - artifacts: ./windows-mingw-x86_64/*
             artifact_name: oDFe-windows-x86_64.zip
 
-          - artifacts: ./macos-x86_64/*
-            artifact_name: oDFe-macos-x86_64.zip
+          - artifacts: ./macos-aarch64/*
+            artifact_name: oDFe-macos-aarch64.zip
 
-          - artifacts: windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ macos-aarch64/ # linux-aarch64/ linux-armv7/
+          - artifacts: linux-x86/ windows-mingw-x86/ windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ macos-x86_64/ # linux-aarch64/ linux-armv7/
             artifact_name: oDFe-other.zip
 
     steps:
