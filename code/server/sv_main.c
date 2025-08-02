@@ -1117,6 +1117,9 @@ static void SV_CheckTimeouts( void ) {
 		if ( cl->state == CS_ZOMBIE && cl->lastPacketTime - zombiepoint < 0 ) {
 			// using the client id cause the cl->name is empty at this point
 			SV_PrintClientStateChange( cl, CS_FREE );
+			#ifdef ENABLE_RS
+			RS_StopRecord(cl);
+			#endif
 			cl->state = CS_FREE;	// can now be reused
 			continue;
 		}
@@ -1385,7 +1388,7 @@ void SV_Frame( int msec ) {
 		sv.timeResidual -= frameMsec;
 		svs.time += frameMsec;
 		sv.time += frameMsec;
-
+		
 		// let everything in the world think and move
 		VM_Call( gvm, 1, GAME_RUN_FRAME, sv.time );
 	}

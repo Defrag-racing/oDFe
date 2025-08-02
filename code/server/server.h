@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 										// GAME BOTH REFERENCE !!!
 
 #define	MAX_ENT_CLUSTERS	16
+#define	UUID_LENGTH		37
 
 typedef struct svEntity_s {
 	struct worldSector_s *worldSector;
@@ -90,6 +91,7 @@ typedef struct {
 	int				time;
 
 	byte			baselineUsed[ MAX_GENTITIES ];
+
 } server_t;
 
 typedef struct {
@@ -155,6 +157,20 @@ typedef enum {
 	GSA_SENT_MANY,	// gamestate sent many times, client must reply with exact gamestateMessageNum == gamestateMessageNum and correct serverId
 	GSA_ACKED		// gamestate acknowledged, no retansmissions needed
 } gameStateAck_t;
+
+typedef struct {
+    int clientNum;          // Entity/client number
+    int time;               // Timer time (in milliseconds)
+    char mapname[64];       // Map name
+    char name[36];          // Player's name
+    int gametype;           // Gametype
+    int promode;            // Promode enabled
+    int submode;            // Sub-mode
+    int interferenceOff;    // Interference off flag
+    int obEnabled;          // Out of bounds enabled
+    int version;            // Version number
+    char date[16];          // Date string (YYYY-MM-DD)
+} timeInfo_t;
 
 typedef struct client_s {
 	clientState_t	state;
@@ -229,6 +245,28 @@ typedef struct client_s {
 	char			tld[3]; // "XX\0"
 	const char		*country;
 
+#ifdef ENABLE_RS
+	qboolean		loggedIn;
+	qboolean 		demoWaiting;
+	qboolean 		awaitingLogin;
+	qboolean		awaitingLogout;
+	qboolean		isRecording;
+	qboolean		isSpectating;
+	qboolean		awaitingDemoSave;
+	int 			timerStopTime;
+	timeInfo_t		*timerStopInfo;
+	char			uuid[UUID_LENGTH];
+	char			displayName[MAX_NAME_LENGTH];
+	fileHandle_t	demoFile;
+	char			demoName[MAX_OSPATH];
+
+	int				eventMask;
+	int				demoCommandSequence;
+	int				demoDeltaNum;
+	int				demoMessageSequence;
+	clientSnapshot_t savedSnap;
+	entityState_t savedEnts[ MAX_SNAPSHOT_ENTITIES ];
+#endif
 } client_t;
 
 //=============================================================================
@@ -389,7 +427,7 @@ client_t *SV_GetPlayerByHandle( void );
 void SV_AddServerCommand( client_t *client, const char *cmd );
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg );
 void SV_WriteFrameToClient( client_t *client, msg_t *msg );
-void SV_SendMessageToClient( msg_t *msg, client_t *client );
+void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot);
 void SV_SendClientMessages( void );
 void SV_SendClientSnapshot( client_t *client );
 
@@ -498,3 +536,7 @@ void SV_LoadFilters( const char *filename );
 const char *SV_RunFilters( const char *userinfo, const netadr_t *addr );
 void SV_AddFilter_f( void );
 void SV_AddFilterCmd_f( void );
+
+#ifdef ENABLE_RS
+#include "../recordsystem/recordsystem.h"
+#endif

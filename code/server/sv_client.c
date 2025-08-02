@@ -867,6 +867,10 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 		return;		// already dropped
 	}
 
+	#ifdef ENABLE_RS
+	RS_StopRecord(drop);
+	#endif
+
 	isBot = drop->netchan.remoteAddress.type == NA_BOT;
 
 	Q_strncpyz( name, drop->name, sizeof( name ) );	// for further DPrintf() because drop->name will be nuked in SV_SetUserinfo()
@@ -1128,7 +1132,7 @@ static void SV_SendClientGameState( client_t *client ) {
 	}
 
 	// deliver this to the client
-	SV_SendMessageToClient( &msg, client );
+	SV_SendMessageToClient( &msg, client, qfalse );
 }
 
 
@@ -1169,9 +1173,14 @@ void SV_ClientEnterWorld( client_t *client ) {
 
 	client->deltaMessage = client->netchan.outgoingSequence - (PACKET_BACKUP + 1); // force delta reset
 	client->lastSnapshotTime = svs.time - 9999; // generate a snapshot immediately
-
 	// call the game begin function
 	VM_Call( gvm, 1, GAME_CLIENT_BEGIN, clientNum );
+	#ifdef ENABLE_RS
+	client->isRecording = qfalse;
+	Com_DPrintf("-----here----\n");
+	Com_DPrintf("Logged: %i, Sequence: %i\n", client->loggedIn, client->reliableSequence);
+	// client->loggedIn = qfalse;
+	#endif
 }
 
 
@@ -2039,7 +2048,7 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 #ifndef DEDICATED
 	if ( !com_cl_running->integer && bFloodProtect && SV_FloodProtect( cl ) ) {
 #else
-	if ( bFloodProtect && SV_FloodProtect( cl ) ) {
+	if ( bFloodProtect && SV_FloodProtect( cl ) ) {	
 #endif
 		// ignore any other text messages from this client but let them keep playing
 		Com_DPrintf( "client text ignored for %s: %s\n", cl->name, Cmd_Argv(0) );
@@ -2050,6 +2059,7 @@ qboolean SV_ExecuteClientCommand( client_t *cl, const char *s ) {
 				Cmd_Args_Sanitize( "\n\r;" ); // handle ';' for OSP
 			else
 				Cmd_Args_Sanitize( "\n\r" );
+			
 			VM_Call( gvm, 1, GAME_CLIENT_COMMAND, cl - svs.clients );
 		}
 	}
@@ -2084,10 +2094,17 @@ static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
 		return qfalse;
 	}
 
+#ifdef ENABLE_RS
+	if (!RS_ExecuteClientCommand(cl, s)) {
+		if ( !SV_ExecuteClientCommand( cl, s ) ) {
+			return qfalse;
+		}
+	}
+#else
 	if ( !SV_ExecuteClientCommand( cl, s ) ) {
 		return qfalse;
 	}
-
+#endif
 	cl->lastClientCommand = seq;
 	Q_strncpyz( cl->lastClientCommandString, s, sizeof( cl->lastClientCommandString ) );
 

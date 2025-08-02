@@ -306,6 +306,7 @@ static  cvar_t          *fs_apppath;
 static	cvar_t		*fs_steampath;
 
 static	cvar_t		*fs_basepath;
+static	cvar_t		*fs_include; // Cyberstorm - Optional extra path.
 static	cvar_t		*fs_basegame;
 static	cvar_t		*fs_copyfiles;
 static	cvar_t		*fs_gamedirvar;
@@ -2520,7 +2521,6 @@ static void FS_WriteCacheHeader( FILE *f )
 	fwrite( cache_header, sizeof( cache_header ), 1, f );
 }
 
-
 static qboolean FS_ValidateCacheHeader( FILE *f )
 {
 	byte buf[ sizeof(cache_header) ];
@@ -4103,6 +4103,44 @@ static void FS_Which_f( void ) {
 	}
 }
 
+static void FS_AddMapDirectory( const char *path, const char *dir ) {
+ 	const searchpath_t *sp;
+ 	int				len;
+ 	searchpath_t	*search;
+ 	int				path_len;
+ 	int				dir_len;
+ 
+ 	for ( sp = fs_searchpaths ; sp ; sp = sp->next ) {
+ 		if ( sp->dir && !Q_stricmp( sp->dir->path, path ) && !Q_stricmp( sp->dir->gamedir, dir )) {
+ 			return;	// we've already got this one
+ 		}
+ 	}
+ 	
+ 	Q_strncpyz( fs_gamedir, dir, sizeof( fs_gamedir ) );
+ 
+ 	//
+ 	// add the directory to the search path
+ 	//
+ 	path_len = (int) strlen( path ) + 1;
+ 	path_len = PAD( path_len, sizeof( int ) );
+ 	dir_len = (int) strlen( dir ) + 1;
+ 	dir_len = PAD( dir_len, sizeof( int ) );
+ 	len = sizeof( *search ) + sizeof( *search->dir ) + path_len + dir_len;
+ 
+ 	search = Z_TagMalloc( len, TAG_SEARCH_PATH );
+ 	Com_Memset( search, 0, len );
+ 	search->dir = (directory_t*)( search + 1 );
+ 	search->dir->path = (char*)( search->dir + 1 );
+ 	search->dir->gamedir = (char*)( search->dir->path + path_len );
+ 
+ 	strcpy( search->dir->path, path );
+ 	strcpy( search->dir->gamedir, dir );
+ 
+ 	search->next = fs_searchpaths;
+ 	fs_searchpaths = search;
+ 	fs_dirCount++;
+}
+
 
 //===========================================================================
 
@@ -4692,6 +4730,8 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_copyfiles, "Whether or not to copy files when loading them into the game. Every file found in the cdpath will be copied over." );
 	fs_basepath = Cvar_Get( "fs_basepath", Sys_DefaultBasePath(), CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the installation folder of the game." );
+	fs_include = Cvar_Get("fs_include", "", CVAR_INIT); // Cyberstorm
+	Cvar_SetDescription( fs_include, "Write-protected CVAR specifying additional paths to look for maps." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
 	fs_steampath = Cvar_Get( "fs_steampath", "", CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
@@ -4776,6 +4816,13 @@ static void FS_Startup( void ) {
 	}
 #endif
 
+	// Cyberstorm
+	if (fs_include->string[0]) {
+		Com_Printf( "----- NFS -----\n" );
+		FS_AddMapDirectory(fs_basepath->string, fs_include->string);
+	}
+	// !Cyberstorm
+	
 	// fs_homepath is somewhat particular to *nix systems, only add if relevant
 	// NOTE: same filtering below for mods and basegame
 	if ( fs_homepath->string[0] && Q_stricmp( fs_homepath->string, fs_basepath->string ) ) {

@@ -22,7 +22,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "server.h"
 
-
 /*
 =============================================================================
 
@@ -686,15 +685,20 @@ SV_SendMessageToClient
 Called by SV_SendClientSnapshot and SV_SendClientGameState
 =======================
 */
-void SV_SendMessageToClient( msg_t *msg, client_t *client )
-{
-	// record information about the message
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.msgTime;
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = 0;
+void SV_SendMessageToClient(msg_t *msg, client_t *client, qboolean isSnapshot) {
+    // record information about the message
 
-	// send the datagram
-	SV_Netchan_Transmit( client, msg );
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.msgTime;
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = 0;
+
+    // send the datagram
+    SV_Netchan_Transmit(client, msg);
+
+#ifdef ENABLE_RS
+	if (isSnapshot)
+		RS_DemoHandler(client);
+#endif
 }
 
 
@@ -739,7 +743,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 		MSG_Clear( &msg );
 	}
 
-	SV_SendMessageToClient( &msg, client );
+	SV_SendMessageToClient( &msg, client, qtrue );
 }
 
 

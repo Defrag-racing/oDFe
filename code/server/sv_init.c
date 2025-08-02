@@ -834,6 +834,9 @@ void SV_Init( void )
 	SV_TrackCvarChanges();
 
 	SV_InitChallenger();
+	// #ifdef ENABLE_RS
+	// RS_InitThreadedDemos();
+	// #endif
 }
 
 
@@ -884,7 +887,9 @@ void SV_Shutdown( const char *finalmsg ) {
 	if ( !com_sv_running || !com_sv_running->integer ) {
 		return;
 	}
-
+	// #ifdef ENABLE_RS
+	// RS_ShutdownThreadedDemos();
+	// #endif
 	Com_Printf( "----- Server Shutdown (%s) -----\n", finalmsg );
 
 #ifdef USE_IPV6

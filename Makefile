@@ -214,6 +214,7 @@ RVDIR=$(MOUNT_DIR)/renderervk
 SDLDIR=$(MOUNT_DIR)/sdl
 SDLHDIR=$(MOUNT_DIR)/libsdl/include/SDL2
 
+RSDIR=$(MOUNT_DIR)/recordsystem
 CMDIR=$(MOUNT_DIR)/qcommon
 UDIR=$(MOUNT_DIR)/unix
 W32DIR=$(MOUNT_DIR)/win32
@@ -438,6 +439,8 @@ ifdef MINGW
   LDFLAGS += -Wl,--gc-sections -fvisibility=hidden
   LDFLAGS += -lwsock32 -lgdi32 -lwinmm -lole32 -lws2_32 -lpsapi -lcomctl32
   LDFLAGS += -flto
+  LDFLAGS += -lpthread
+
 
   CLIENT_LDFLAGS=$(LDFLAGS)
 
@@ -707,7 +710,7 @@ endef
 
 define DO_DED_CC
 $(echo_cmd) "DED_CC $<"
-$(Q)$(CC) $(CFLAGS) -DDEDICATED -o $@ -c $<
+$(Q)$(CC) $(CFLAGS) -DDEDICATED -DENABLE_RS -o $@ -c $<
 endef
 
 define DO_WINDRES
@@ -1305,6 +1308,11 @@ Q3DOBJ = \
   $(B)/ded/cm_test.o \
   $(B)/ded/cm_trace.o \
   $(B)/ded/cmd.o \
+  $(B)/ded/cJSON.o \
+  $(B)/ded/rs_records.o \
+  $(B)/ded/rs_common.o \
+  $(B)/ded/rs_commands.o \
+  $(B)/ded/rs_serverdemos.o \
   $(B)/ded/common.o \
   $(B)/ded/cvar.o \
   $(B)/ded/files.o \
@@ -1384,7 +1392,7 @@ endif
 
 $(B)/$(TARGET_SERVER): $(Q3DOBJ)
 	$(echo_cmd) "LD $@"
-	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS)
+	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS) -lcurl -lpthread
 
 #############################################################################
 ## CLIENT/SERVER RULES
@@ -1397,6 +1405,9 @@ $(B)/client/%.o: $(CDIR)/%.c
 	$(DO_CC)
 
 $(B)/client/%.o: $(SDIR)/%.c
+	$(DO_CC)
+
+$(B)/client/%.o: $(RSDIR)/%.c
 	$(DO_CC)
 
 $(B)/client/%.o: $(CMDIR)/%.c
@@ -1463,6 +1474,9 @@ $(B)/ded/%.o: $(ADIR)/%.s
 	$(DO_AS)
 
 $(B)/ded/%.o: $(SDIR)/%.c
+	$(DO_DED_CC)
+
+$(B)/ded/%.o: $(RSDIR)/%.c
 	$(DO_DED_CC)
 
 $(B)/ded/%.o: $(CMDIR)/%.c
