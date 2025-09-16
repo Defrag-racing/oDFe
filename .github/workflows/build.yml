@@ -214,13 +214,11 @@ jobs:
     steps:
 
     - uses: actions/checkout@v4
-      if: false
       with:
         submodules: recursive
 
     - name: Build ${{ matrix.arch }}
-      #if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
-      if: false
+      if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       uses: uraimo/run-on-arch-action@v3
       with:
         arch: ${{ matrix.arch }}
@@ -236,8 +234,7 @@ jobs:
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
-      if: false
-      #if: matrix.cc == 'gcc' && matrix.btype == 'Release'
+      if: matrix.cc == 'gcc' && matrix.btype == 'Release'
       with:
         name: linux-${{ matrix.arch }}
         path: bin
