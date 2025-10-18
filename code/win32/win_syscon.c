@@ -581,13 +581,13 @@ static LRESULT WINAPI InputLineWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 
 	case WM_KEYDOWN:
 	{
-		if ( wParam == 'L' && ( GetAsyncKeyState( VK_LCONTROL ) & 0x8000 || GetAsyncKeyState( VK_RCONTROL ) & 0x8000 ) ) {
+		if ( wParam == 'L' && ( GetKeyState( VK_LCONTROL ) & 0x8000 || GetKeyState( VK_RCONTROL ) & 0x8000 ) ) {
 			ConClear();
 			return 0;
 		}
 
 		if ( wParam == VK_PRIOR ) {
-			if ( GetAsyncKeyState( VK_LCONTROL ) & 0x8000 || GetAsyncKeyState( VK_RCONTROL ) & 0x8000 )
+			if ( GetKeyState( VK_LCONTROL ) & 0x8000 || GetKeyState( VK_RCONTROL ) & 0x8000 )
 				SendMessage( s_wcd.hwndBuffer, EM_SCROLL, (WPARAM)SB_PAGEUP, 0 );
 			else
 				SendMessage( s_wcd.hwndBuffer, EM_SCROLL, (WPARAM)SB_LINEUP, 0 );
@@ -595,7 +595,7 @@ static LRESULT WINAPI InputLineWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 		}
 
 		if ( wParam == VK_NEXT ) {
-			if ( GetAsyncKeyState( VK_LCONTROL ) & 0x8000 || GetAsyncKeyState( VK_RCONTROL ) & 0x8000 )
+			if ( GetKeyState( VK_LCONTROL ) & 0x8000 || GetKeyState( VK_RCONTROL ) & 0x8000 )
 				SendMessage( s_wcd.hwndBuffer, EM_SCROLL, (WPARAM)SB_PAGEDOWN, 0 );
 			else
 				SendMessage( s_wcd.hwndBuffer, EM_SCROLL, (WPARAM)SB_LINEDOWN, 0 );

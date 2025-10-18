@@ -9,7 +9,7 @@ on:
       - 'docs/*'
   push:
     branches:
-      - master
+      - main
     paths-ignore:
       - '**.md'
       - '*.txt'
@@ -22,8 +22,8 @@ on:
 
 jobs:
   windows-msys:
-    name: ${{ matrix.btype }} Windows-GCC ${{ matrix.arch }}
-    runs-on: windows-latest
+    name: ${{ matrix.btype }} Windows-${{ matrix.cc }} ${{ matrix.arch }}
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -33,9 +33,11 @@ jobs:
         include:
           - arch: x86
             msystem: MINGW32
+            prefix: mingw-w64-i686
 
           - arch: x86_64
             msystem: MINGW64
+            prefix: mingw-w64-x86_64
 
           - btype: Release
             rule: install
@@ -51,11 +53,12 @@ jobs:
 
     - uses: msys2/setup-msys2@v2
       with:
+        install: base-devel ${{ matrix.prefix }}-binutils ${{ matrix.prefix }}-make ${{ matrix.prefix }}-${{ matrix.cc }}
         msystem: ${{ matrix.msystem }}
-        pacboy: binutils:p make:p ${{ matrix.cc }}:p
         path-type: minimal
         release: false
         update: false
+        cache: false
 
     - uses: actions/checkout@v4
       with:
@@ -64,13 +67,64 @@ jobs:
     - name: Build
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       run: |
-        mingw32-make clean ARCH=${{ matrix.arch }}
-        mingw32-make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
-        mingw32-make clean ARCH=${{ matrix.arch }}
-        mingw32-make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} COMPILE_ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
+        make clean ARCH=${{ matrix.arch }}
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} COMPILE_ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
-      if: matrix.cc == 'gcc' && matrix.btype == 'release'
+      if: matrix.cc == 'gcc' && matrix.btype == 'Release'
+      with:
+        name: windows-${{ matrix.cc }}-${{ matrix.arch }}
+        path: bin
+        if-no-files-found: error
+        retention-days: 5
+
+  windows-msys32:
+    name: ${{ matrix.btype }} Windows-msys32 ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x86_64]
+#       btype: [Release, Debug]
+        btype: [Release]
+        include:
+          - btype: Release
+            rule: install
+
+#         - btype: Debug
+#           rule: debug
+
+    steps:
+    - name: Checkout current repo
+      uses: actions/checkout@v4
+
+    - name: Checkout msys32 tools from sibling repo
+      uses: actions/checkout@v4
+      with:
+        repository: ec-/msys32
+        path: msys
+
+    - name: Extract msys32.7z
+      run: |
+        7z x %GITHUB_WORKSPACE%/msys/msys32.7z -o%GITHUB_WORKSPACE%/msys
+      shell: cmd
+
+    - name: Prepend msys/bin to PATH
+      run: |
+           echo "PATH=$GITHUB_WORKSPACE/msys/mingw/bin;$GITHUB_WORKSPACE/msys/bin;$GITHUB_WORKSPACE/msys" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Build
+      if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
+      shell: cmd
+      run: |
+        make ${{ matrix.rule }} ARCH=${{ matrix.arch }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
+        make clean ARCH=${{ matrix.arch }}
+        make ${{ matrix.rule }} ARCH=${{ matrix.arch }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
+
+    - uses: actions/upload-artifact@v4
+      if: matrix.btype == 'Release'
       with:
         name: windows-mingw-${{ matrix.arch }}
         path: bin
@@ -78,11 +132,8 @@ jobs:
         retention-days: 5
 
   windows-msvc:
-    if: false # TODO: support windows-latest
     name: ${{ matrix.btype }} Windows-MSVC ${{ matrix.arch }}
-    # windows-2019: build tools for Visual Studio 2017 (Platform Toolset = v141)
-    # https://github.com/actions/runner-images/blob/main/images/windows/Windows2019-Readme.md
-    runs-on: windows-2019 # deprecated
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -116,33 +167,33 @@ jobs:
       run: |
         mkdir bin
 
-        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=oDFe.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
+        msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=oDFe.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} /p:PlatformToolset=v143
         copy code\win32\msvc2017\output\oDFe.ded.exe bin\oDFe.ded${{ matrix.suffix }}.exe
         msbuild code\win32\msvc2017\quake3e-ded.vcxproj -p:TargetName=oDFe.ded,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
 
-        msbuild code\win32\msvc2017\renderer.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
+        msbuild code\win32\msvc2017\renderer.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} /p:PlatformToolset=v143
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 /p:PlatformToolset=v143
         copy code\win32\msvc2017\output\oDFe.exe bin\oDFe${{ matrix.suffix }}.exe
         msbuild code\win32\msvc2017\renderer.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
         msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
 
-        msbuild code\win32\msvc2017\renderervk.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }}
-        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0
+        msbuild code\win32\msvc2017\renderervk.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} /p:PlatformToolset=v143
+        msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 /p:PlatformToolset=v143
         copy code\win32\msvc2017\output\oDFe.exe bin\oDFe.vk${{ matrix.suffix }}.exe
         msbuild code\win32\msvc2017\renderervk.vcxproj -p:Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }} -t:Clean
         msbuild code\win32\msvc2017\quake3e.vcxproj -p:TargetName=oDFe,Configuration=${{ matrix.btype }},Platform=${{ matrix.platform }},UseWasapi=USE_WASAPI=0 -t:Clean
 
     - uses: actions/upload-artifact@v4
-      if: ${{ matrix.btype == 'release' }}
+      if: ${{ matrix.btype == 'Release' }}
       with:
         name: windows-msvc-${{ matrix.pkg_suffix }}
         path: bin
         if-no-files-found: error
         retention-days: 5
-
+        
   ubuntu-x86:
     name: ${{ matrix.btype }} Ubuntu ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -183,12 +234,12 @@ jobs:
     - name: Build
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip in Release builds
       run: |
-        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
-        make clean ARCH=${{ matrix.arch }}
-        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} COMPILE_ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
+        make clean ARCH=${{ matrix.arch }} 
+        make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} COMPILE_ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin ${{ matrix.use_sdl }} USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
-      if: matrix.cc == 'gcc' && matrix.btype == 'release'
+      if: matrix.cc == 'gcc' && matrix.btype == 'Release'
       with:
         name: linux-${{ matrix.arch }}
         path: bin
@@ -197,7 +248,7 @@ jobs:
 
   ubuntu-arm:
     name: ${{ matrix.btype }} Ubuntu [ARM] ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -224,15 +275,16 @@ jobs:
       uses: uraimo/run-on-arch-action@v3
       with:
         arch: ${{ matrix.arch }}
-        distro: ubuntu_latest
+        distro: ubuntu24.04
         githubToken: ${{ github.token }}
         shell: /bin/sh
         run: |
           apt-get -qq update
           apt-get install -y make gcc g++
           apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libpcre2-dev
+
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
-          make clean ARCH=${{ matrix.arch }}
+          make clean ARCH=${{ matrix.arch }} 
           make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
 
     - uses: actions/upload-artifact@v4
@@ -244,22 +296,59 @@ jobs:
         if-no-files-found: error
         retention-days: 5
 
-  macos-x86:
-    name: ${{ matrix.btype }} macOS ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
+  ubuntu-arm64:
+    name: ${{ matrix.btype }} Ubuntu ${{ matrix.arch }}
+    runs-on: ubuntu-22.04-arm
     strategy:
       fail-fast: false
       matrix:
-        arch: [aarch64, x86_64]
+        arch: [arm64]
+        cc: [gcc]
+        btype: [Release, Debug]
+        include:
+          - btype: Release
+            rule: install
+
+          - btype: Debug
+            rule: debug
+
+    steps:
+
+    - name: Install tools
+      run: |
+        sudo apt-get -qq update
+        sudo apt-get install -y make gcc g++
+        sudo apt-get -y install libcurl4-openssl-dev mesa-common-dev libxxf86dga-dev libxrandr-dev libxxf86vm-dev libasound-dev libsdl2-dev libpcre2-dev
+
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Build
+      if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
+      run: |
+          make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0
+          make clean ARCH=${{ matrix.arch }} 
+          make ${{ matrix.rule }} -j$(nproc) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin USE_SDL=0 USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl
+
+    - uses: actions/upload-artifact@v4
+      if: matrix.cc == 'gcc' && matrix.btype == 'Release'
+      with:
+        name: linux-${{ matrix.arch }}
+        path: bin
+        if-no-files-found: error
+        retention-days: 5
+
+  macos-x86:
+    name: ${{ matrix.btype }} macOS ${{ matrix.arch }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
         cc: [clang]
         btype: [Release, Debug]
         include:
-          - arch: aarch64
-            os: macos-latest
-
-          - arch: x86_64
-            os: macos-13
-
           - btype: Release
             rule: install
 
@@ -279,11 +368,11 @@ jobs:
       if: ${{ github.event_name != 'release' || matrix.btype != 'Debug' }} # skip Debug configuration in Release build
       run: |
         make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=vulkan CNAME=oDFe.vk BUILD_SERVER=0 STRIP=echo
-        make clean ARCH=${{ matrix.arch }}
+        make clean ARCH=${{ matrix.arch }} 
         make ${{ matrix.rule }} -j$(sysctl -n hw.logicalcpu) ARCH=${{ matrix.arch }} CC=${{ matrix.cc }} DESTDIR=bin INSTALL=ginstall USE_RENDERER_DLOPEN=0 RENDERER_DEFAULT=opengl STRIP=echo
 
     - uses: actions/upload-artifact@v4
-      if: matrix.cc == 'clang' && matrix.btype == 'release'
+      if: matrix.cc == 'clang' && matrix.btype == 'Release'
       with:
         name: macos-${{ matrix.arch }}
         path: bin
@@ -291,8 +380,8 @@ jobs:
         retention-days: 5
 
   create-testing:
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: [windows-msys, ubuntu-x86, ubuntu-arm, macos-x86] # windows-msvc
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [windows-msys32, windows-msvc, ubuntu-x86, ubuntu-arm64, macos-x86]
     runs-on: ubuntu-latest
     steps:
       - name: Download Artifacts
@@ -303,12 +392,13 @@ jobs:
           7z a -r oDFe-linux-x86_64.zip   ./linux-x86_64/*
           7z a -r oDFe-windows-x86_64.zip ./windows-mingw-x86_64/*
           7z a -r oDFe-macos-aarch64.zip  ./macos-aarch64/*
+          7z a -r oDFe-other.zip          linux-arm64/
           7z a -r oDFe-other.zip          linux-x86/
           7z a -r oDFe-other.zip          windows-mingw-x86/
+          7z a -r oDFe-other.zip          windows-msvc-x86/
+          7z a -r oDFe-other.zip          windows-msvc-x86_64/
+          7z a -r oDFe-other.zip          windows-msvc-arm64/
           7z a -r oDFe-other.zip          macos-x86_64/
-          # 7z a -r oDFe-other.zip          windows-msvc-x86/
-          # 7z a -r oDFe-other.zip          windows-msvc-x86_64/
-          # 7z a -r oDFe-other.zip          windows-msvc-arm64/
           # 7z a -r oDFe-other.zip          linux-aarch64/
           # 7z a -r oDFe-other.zip          linux-armv7/
 
@@ -324,7 +414,7 @@ jobs:
 
   update-release:
     if: ${{ github.event_name == 'release' }}
-    needs: [windows-msys, ubuntu-x86, ubuntu-arm, macos-x86] # windows-msvc
+    needs: [windows-msys32, windows-msvc, ubuntu-x86, ubuntu-arm, macos-x86]
     runs-on: ubuntu-latest
 
     strategy:
@@ -339,7 +429,7 @@ jobs:
           - artifacts: ./macos-aarch64/*
             artifact_name: oDFe-macos-aarch64.zip
 
-          - artifacts: linux-x86/ windows-mingw-x86/ macos-x86_64/ # windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ linux-aarch64/ linux-armv7/
+          - artifacts: linux-arm64/ linux-x86/ windows-mingw-x86/ windows-msvc-x86/ windows-msvc-x86_64/ windows-msvc-arm64/ macos-x86_64/ # linux-aarch64/ linux-armv7/
             artifact_name: oDFe-other.zip
 
     steps:

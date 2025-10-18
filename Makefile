@@ -372,24 +372,30 @@ ifdef MINGW
     # If CC is already set to something generic, we probably want to use
     # something more specific
     ifneq ($(findstring $(strip $(CC)),cc gcc),)
-      CC=
+      override CC=
+    endif
+
+    ifneq ($(findstring $(strip $(STRIP)),strip),)
+      override STRIP=
     endif
 
     # We need to figure out the correct gcc and windres
     ifeq ($(ARCH),x86_64)
       MINGW_PREFIXES=x86_64-w64-mingw32 amd64-mingw32msvc
-      STRIP=x86_64-w64-mingw32-strip
     endif
     ifeq ($(ARCH),x86)
       MINGW_PREFIXES=i686-w64-mingw32 i586-mingw32msvc i686-pc-mingw32
     endif
 
     ifndef CC
-      CC=$(firstword $(strip $(foreach MINGW_PREFIX, $(MINGW_PREFIXES), \
+      override CC=$(firstword $(strip $(foreach MINGW_PREFIX, $(MINGW_PREFIXES), \
          $(call bin_path, $(MINGW_PREFIX)-gcc))))
     endif
 
-#   STRIP=$(MINGW_PREFIX)-strip -g
+    ifndef STRIP
+      override STRIP=$(firstword $(strip $(foreach MINGW_PREFIX, $(MINGW_PREFIXES), \
+         $(call bin_path, $(MINGW_PREFIX)-strip))))
+    endif
 
     ifndef WINDRES
       WINDRES=$(firstword $(strip $(foreach MINGW_PREFIX, $(MINGW_PREFIXES), \
@@ -399,7 +405,7 @@ ifdef MINGW
     # Some MinGW installations define CC to cc, but don't actually provide cc,
     # so check that CC points to a real binary and use gcc if it doesn't
     ifeq ($(call bin_path, $(CC)),)
-      CC=gcc
+      override CC=gcc
     endif
 
   endif
@@ -462,7 +468,7 @@ ifdef MINGW
     else
       CLIENT_LDFLAGS += -L$(MOUNT_DIR)/libcurl/windows/mingw/lib64
     endif
-    CLIENT_LDFLAGS += -lcurl -lwldap32 -lcrypt32
+    CLIENT_LDFLAGS += -lcurl -lz -lcrypt32
   endif
 
   ifeq ($(USE_PCRE2),1)
@@ -684,6 +690,11 @@ $(echo_cmd) "CC $<"
 $(Q)$(CC) $(CFLAGS) -o $@ -c $<
 endef
 
+define DO_CC_QVM
+$(echo_cmd) "CC_QVM $<"
+$(Q)$(CC) $(CFLAGS) -fno-fast-math -o $@ -c $<
+endef
+
 define DO_REND_CC
 $(echo_cmd) "REND_CC $<"
 $(Q)$(CC) $(CFLAGS) $(RENDCFLAGS) -o $@ -c $<
@@ -708,6 +719,11 @@ endef
 define DO_DED_CC
 $(echo_cmd) "DED_CC $<"
 $(Q)$(CC) $(CFLAGS) -DDEDICATED -o $@ -c $<
+endef
+
+define DO_DED_CC_QVM
+$(echo_cmd) "DED_CC_QVM $<"
+$(Q)$(CC) $(CFLAGS) -fno-fast-math -DDEDICATED -o $@ -c $<
 endef
 
 define DO_WINDRES
@@ -766,6 +782,7 @@ targets: makedirs tools
 	@echo "  COMPILE_ARCH: $(COMPILE_ARCH)"
 ifdef MINGW
 	@echo "  WINDRES: $(WINDRES)"
+	@echo "  STRIP: $(STRIP)"
 endif
 	@echo "  CC: $(CC)"
 	@echo ""
@@ -788,7 +805,7 @@ endif
 makedirs:
 	@if [ ! -d $(BUILD_DIR) ];then $(MKDIR) $(BUILD_DIR);fi
 	@if [ ! -d $(B) ];then $(MKDIR) $(B);fi
-	@if [ ! -d $(B)/client ];then $(MKDIR) $(B)/client;fi
+	@if [ ! -d $(B)/client ];then $(MKDIR) $(B)/client/qvm;fi
 	@if [ ! -d $(B)/client/jpeg ];then $(MKDIR) $(B)/client/jpeg;fi
 ifeq ($(USE_SYSTEM_OGG),0)
 	@if [ ! -d $(B)/client/ogg ];then $(MKDIR) $(B)/client/ogg;fi
@@ -801,7 +818,7 @@ endif
 	@if [ ! -d $(B)/rend2/glsl ];then $(MKDIR) $(B)/rend2/glsl;fi
 	@if [ ! -d $(B)/rendv ];then $(MKDIR) $(B)/rendv;fi
 ifneq ($(BUILD_SERVER),0)
-	@if [ ! -d $(B)/ded ];then $(MKDIR) $(B)/ded;fi
+	@if [ ! -d $(B)/ded ];then $(MKDIR) $(B)/ded/qvm;fi
 endif
 
 #############################################################################
@@ -1106,8 +1123,6 @@ Q3OBJ = \
   \
   $(B)/client/unzip.o \
   $(B)/client/puff.o \
-  $(B)/client/vm.o \
-  $(B)/client/vm_interpreted.o \
   \
   $(B)/client/be_aas_bspq3.o \
   $(B)/client/be_aas_cluster.o \
@@ -1173,18 +1188,22 @@ ifeq ($(ARCH),x86_64)
     $(B)/client/snd_mix_x86_64.o
 endif
 
+Q3OBJ += \
+  $(B)/client/qvm/vm.o \
+  $(B)/client/qvm/vm_interpreted.o
+
 ifeq ($(HAVE_VM_COMPILED),true)
   ifeq ($(ARCH),x86)
-    Q3OBJ += $(B)/client/vm_x86.o
+    Q3OBJ += $(B)/client/qvm/vm_x86.o
   endif
   ifeq ($(ARCH),x86_64)
-    Q3OBJ += $(B)/client/vm_x86.o
+    Q3OBJ += $(B)/client/qvm/vm_x86.o
   endif
   ifeq ($(ARCH),arm)
-    Q3OBJ += $(B)/client/vm_armv7l.o
+    Q3OBJ += $(B)/client/qvm/vm_armv7l.o
   endif
   ifeq ($(ARCH),aarch64)
-    Q3OBJ += $(B)/client/vm_aarch64.o
+    Q3OBJ += $(B)/client/qvm/vm_aarch64.o
   endif
 endif
 
@@ -1262,8 +1281,7 @@ endif # !MINGW
 
 $(B)/$(TARGET_CLIENT): $(Q3OBJ)
 	$(echo_cmd) "LD $@"
-	$(Q)$(CC) -o $@ $(Q3OBJ) $(CLIENT_LDFLAGS) \
-		$(LDFLAGS)
+	$(Q)$(CC) -o $@ $(Q3OBJ) $(CLIENT_LDFLAGS) $(LDFLAGS)
 
 # modular renderers
 
@@ -1322,8 +1340,6 @@ Q3DOBJ = \
   $(B)/ded/q_shared.o \
   \
   $(B)/ded/unzip.o \
-  $(B)/ded/vm.o \
-  $(B)/ded/vm_interpreted.o \
   \
   $(B)/ded/be_aas_bspq3.o \
   $(B)/ded/be_aas_cluster.o \
@@ -1367,22 +1383,27 @@ else
   $(B)/ded/unix_shared.o
 endif
 
+  Q3DOBJ += \
+  $(B)/ded/qvm/vm.o \
+  $(B)/ded/qvm/vm_interpreted.o
+
 ifeq ($(HAVE_VM_COMPILED),true)
   ifeq ($(ARCH),x86)
-    Q3DOBJ += $(B)/ded/vm_x86.o
+    Q3DOBJ += $(B)/ded/qvm/vm_x86.o
   endif
   ifeq ($(ARCH),x86_64)
-    Q3DOBJ += $(B)/ded/vm_x86.o
+    Q3DOBJ += $(B)/ded/qvm/vm_x86.o
   endif
   ifeq ($(ARCH),arm)
-    Q3DOBJ += $(B)/ded/vm_armv7l.o
+    Q3DOBJ += $(B)/ded/qvm/vm_armv7l.o
   endif
   ifeq ($(ARCH),aarch64)
-    Q3DOBJ += $(B)/ded/vm_aarch64.o
+    Q3DOBJ += $(B)/ded/qvm/vm_aarch64.o
   endif
 endif
 
 $(B)/$(TARGET_SERVER): $(Q3DOBJ)
+	$(echo_cmd) $(Q3DOBJ)
 	$(echo_cmd) "LD $@"
 	$(Q)$(CC) -o $@ $(Q3DOBJ) $(LDFLAGS)
 
@@ -1401,6 +1422,9 @@ $(B)/client/%.o: $(SDIR)/%.c
 
 $(B)/client/%.o: $(CMDIR)/%.c
 	$(DO_CC)
+
+$(B)/client/qvm/%.o: $(CMDIR)/%.c
+	$(DO_CC_QVM)
 
 $(B)/client/%.o: $(BLIBDIR)/%.c
 	$(DO_BOT_CC)
@@ -1467,6 +1491,9 @@ $(B)/ded/%.o: $(SDIR)/%.c
 
 $(B)/ded/%.o: $(CMDIR)/%.c
 	$(DO_DED_CC)
+
+$(B)/ded/qvm/%.o: $(CMDIR)/%.c
+	$(DO_DED_CC_QVM)
 
 $(B)/ded/%.o: $(BLIBDIR)/%.c
 	$(DO_BOT_CC)
