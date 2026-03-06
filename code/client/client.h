@@ -371,6 +371,7 @@ void		Com_DL_Cleanup( download_t *dl );
 qboolean	Com_DL_Begin( download_t *dl, const char *localName, const char *remoteURL, qboolean autoDownload );
 qboolean	Com_DL_InProgress( const download_t *dl );
 qboolean	Com_DL_ValidFileName( const char *fileName );
+int			Com_DL_SpeedTest( download_t *dl, const char *url1, const char *url2 );
 qboolean	CL_Download( const char *cmd, const char *pakname, qboolean autoDownload );
 
 #endif
