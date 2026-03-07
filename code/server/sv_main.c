@@ -718,6 +718,158 @@ static void SVC_Status( const netadr_t *from ) {
 
 /*
 ================
+SVC_StatusDefrag
+
+Responds to getdfstatus with extended player info for the defrag website scraper.
+Player line format:
+  clientId dfscore ping "name" "spectating_name" "tld" "model" "headmodel" uid "color1"
+================
+*/
+
+static void SVC_StatusDefrag_NoFlush( const char *buffer ) {
+	// no-op: we read the buffer directly after Com_EndRedirect
+}
+
+static void SVC_StatusDefrag_ParseUIDs( const char *scoreOutput, int *uidMap, int maxClients ) {
+	const char *p = scoreOutput;
+	const char *numStart, *numEnd, *uidStart, *uidEnd;
+	int num, uid;
+	char tmp[32];
+
+	while ( ( p = strstr( p, "<player>" ) ) != NULL ) {
+		// find <num>X</num>
+		numStart = strstr( p, "<num>" );
+		if ( !numStart ) break;
+		numStart += 5;
+		numEnd = strstr( numStart, "</num>" );
+		if ( !numEnd || numEnd - numStart >= (int)sizeof(tmp) ) break;
+		Q_strncpyz( tmp, numStart, (int)(numEnd - numStart) + 1 );
+		num = atoi( tmp );
+
+		// find <uid>X</uid>
+		uidStart = strstr( p, "<uid>" );
+		if ( !uidStart ) break;
+		uidStart += 5;
+		uidEnd = strstr( uidStart, "</uid>" );
+		if ( !uidEnd || uidEnd - uidStart >= (int)sizeof(tmp) ) break;
+		Q_strncpyz( tmp, uidStart, (int)(uidEnd - uidStart) + 1 );
+		uid = atoi( tmp );
+
+		if ( num >= 0 && num < maxClients ) {
+			uidMap[num] = uid;
+		}
+
+		p = uidEnd + 6;
+	}
+}
+
+static void SVC_StatusDefrag( const netadr_t *from ) {
+	char	player[MAX_NAME_LENGTH + MAX_INFO_VALUE + 128];
+	char	status[MAX_PACKETLEN];
+	char	scoreBuffer[4096];
+	char	*s;
+	int		i;
+	client_t	*cl;
+	playerState_t	*ps;
+	int		statusLength;
+	int		playerLength;
+	char	infostring[MAX_INFO_STRING+160];
+	char	tld[MAX_INFO_VALUE];
+	char	model_str[MAX_INFO_VALUE];
+	char	headmodel_str[MAX_INFO_VALUE];
+	char	color1_str[MAX_INFO_VALUE];
+	const char	*spectating;
+	int		dfscore;
+	int		uidMap[MAX_CLIENTS];
+
+	// ignore if we are in single player
+#ifndef DEDICATED
+	if ( Cvar_VariableIntegerValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableIntegerValue("ui_singlePlayerActive")) {
+		return;
+	}
+#endif
+
+	// Prevent using getdfstatus as an amplifier
+	if ( SVC_RateLimitAddress( from, 10, 1000 ) ) {
+		if ( com_developer->integer ) {
+			Com_Printf( "SVC_StatusDefrag: rate limit from %s exceeded, dropping request\n",
+				NET_AdrToString( from ) );
+		}
+		return;
+	}
+
+	if ( SVC_RateLimit( &outboundRateLimit, 10, 100 ) ) {
+		Com_DPrintf( "SVC_StatusDefrag: rate limit exceeded, dropping request\n" );
+		return;
+	}
+
+	if ( strlen( Cmd_Argv( 1 ) ) > 128 )
+		return;
+
+	// get MDD UIDs by internally executing the mod's "score" command
+	memset( uidMap, 0, sizeof( uidMap ) );
+	Com_BeginRedirect( scoreBuffer, sizeof( scoreBuffer ), SVC_StatusDefrag_NoFlush );
+	Cbuf_ExecuteText( EXEC_NOW, "score\n" );
+	Com_EndRedirect();
+	SVC_StatusDefrag_ParseUIDs( scoreBuffer, uidMap, MAX_CLIENTS );
+
+	Q_strncpyz( infostring, Cvar_InfoString( CVAR_SERVERINFO, NULL ), sizeof( infostring ) );
+	Info_SetValueForKey( infostring, "challenge", Cmd_Argv( 1 ) );
+
+	s = status;
+	status[0] = '\0';
+	statusLength = strlen( infostring ) + 16;
+
+	for ( i = 0; i < sv.maxclients; i++ ) {
+		cl = &svs.clients[i];
+		if ( cl->state >= CS_CONNECTED ) {
+
+			ps = SV_GameClientNum( i );
+
+			// dfscore from configstring (set by defrag mod)
+			dfscore = atoi( Info_ValueForKey( sv.configstrings[CS_PLAYERS+i], "dfscore" ) );
+
+			// spectating: if player is following someone else
+			if ( i != ps->clientNum && ps->clientNum >= 0 && ps->clientNum < sv.maxclients
+				&& svs.clients[ps->clientNum].state >= CS_CONNECTED ) {
+				spectating = svs.clients[ps->clientNum].name;
+			} else {
+				spectating = "";
+			}
+
+			// copy each value immediately to avoid Info_ValueForKey static buffer overwrite
+			Q_strncpyz( tld, Info_ValueForKey( cl->userinfo, "tld" ), sizeof( tld ) );
+
+			Q_strncpyz( model_str, Info_ValueForKey( cl->userinfo, "model" ), sizeof( model_str ) );
+			if ( !*model_str )
+				strcpy( model_str, "sarge" );
+
+			Q_strncpyz( headmodel_str, Info_ValueForKey( cl->userinfo, "headmodel" ), sizeof( headmodel_str ) );
+			if ( !*headmodel_str )
+				strcpy( headmodel_str, "sarge" );
+
+			// color1: raw value (web derives nospec from "nospec"/"nospecpm")
+			Q_strncpyz( color1_str, Info_ValueForKey( cl->userinfo, "color1" ), sizeof( color1_str ) );
+
+			playerLength = Com_sprintf( player, sizeof( player ),
+				"%i %i %i \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" %i \"%s\"\n",
+				i, dfscore, cl->ping, cl->name, spectating,
+				tld, model_str, headmodel_str, uidMap[i], color1_str );
+
+			if ( statusLength + playerLength >= MAX_PACKETLEN-4 )
+				break;
+
+			s = Q_stradd( s, player );
+			statusLength += playerLength;
+		}
+	}
+
+	NET_OutOfBandPrint( NS_SERVER, from, "statusResponse\n%s\n%s", infostring, status );
+}
+
+
+/*
+================
 SVC_Info
 
 Responds with a short info message that should be enough to determine
@@ -940,6 +1092,8 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 
 	if (!Q_stricmp(c, "getstatus")) {
 		SVC_Status( from );
+	} else if (!Q_stricmp(c, "getdfstatus")) {
+		SVC_StatusDefrag( from );
 	} else if (!Q_stricmp(c, "getinfo")) {
 		SVC_Info( from );
 	} else if (!Q_stricmp(c, "getchallenge")) {
@@ -1322,6 +1476,12 @@ void SV_Frame( int msec ) {
 		Com_DPrintf( "timescale adjusted to %f\n", com_timescale->value );
 		frameMsec = 1;
 	}
+
+	// clamp msec spikes to max 2x frameMsec to prevent burst simulation
+	// when OS wakes server thread late (e.g. 24ms instead of 8ms), this limits
+	// the simulation to max 2 frames in one go, avoiding snapshot bursts
+	if ( msec > frameMsec * 2 )
+		msec = frameMsec * 2;
 
 	sv.timeResidual += msec;
 
