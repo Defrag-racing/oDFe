@@ -219,7 +219,7 @@ qboolean	NET_Sleep( int timeout );
 
 #define	MAX_PACKETLEN	1400	// max size of a network packet
 
-#define	MAX_MSGLEN		16384	// max length of a message, which may
+#define	MAX_MSGLEN		49152	// max length of a message, which may
 								// be fragmented into multiple packets
 
 #define	MAX_MSGLEN_BUF	(MAX_MSGLEN+8)	// real buffer size that we need to allocate
