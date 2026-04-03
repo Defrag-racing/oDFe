@@ -1162,7 +1162,37 @@ void CL_SetCGameTime( void ) {
 		// cl_timeNudge is a user adjustable cvar that allows more
 		// or less latency to be added in the interest of better
 		// smoothness or better responsiveness.
-		cl.serverTime = cls.realtime + cl.serverTimeDelta - CL_TimeNudge();
+
+		if ( cl_localTime->integer && !clc.demoplaying ) {
+			// PLL: advance serverTime at constant local rate instead of
+			// jumping to network-derived value each frame. Eliminates
+			// rendering jitter from snapshot arrival variance.
+			static int lastRealtime = 0;
+			int frameDelta, targetTime, error;
+
+			if ( lastRealtime == 0 || lastRealtime > cls.realtime )
+				lastRealtime = cls.realtime;
+
+			frameDelta = cls.realtime - lastRealtime;
+			lastRealtime = cls.realtime;
+
+			targetTime = cls.realtime + cl.serverTimeDelta - CL_TimeNudge();
+			error = targetTime - cl.serverTime;
+
+			// soft rate adjustment: speed up/slow down max 2% to track server
+			if ( error > 2 )
+				cl.serverTime += (int)( frameDelta * 1.02f );
+			else if ( error < -2 )
+				cl.serverTime += (int)( frameDelta * 0.98f );
+			else
+				cl.serverTime += frameDelta;
+
+			// hard clamp: never diverge more than 100ms from server
+			if ( error > 100 || error < -100 )
+				cl.serverTime = targetTime;
+		} else {
+			cl.serverTime = cls.realtime + cl.serverTimeDelta - CL_TimeNudge();
+		}
 
 		// guarantee that time will never flow backwards, even if
 		// serverTimeDelta made an adjustment or cl_timeNudge was changed

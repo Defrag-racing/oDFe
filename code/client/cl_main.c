@@ -39,6 +39,7 @@ cvar_t	*cl_timeout;
 cvar_t	*cl_autoNudge;
 cvar_t	*cl_timeNudge;
 cvar_t	*cl_showTimeDelta;
+cvar_t	*cl_localTime;
 
 cvar_t	*cl_shownet;
 cvar_t	*cl_autoRecordDemo;
@@ -3907,6 +3908,10 @@ void CL_Init( void ) {
 	cl_timeNudge = Cvar_Get( "cl_timeNudge", "0", CVAR_TEMP );
 	Cvar_CheckRange( cl_timeNudge, "-250", "250", CV_INTEGER );
 	Cvar_SetDescription( cl_timeNudge, "Allows more or less latency to be added in the interest of better smoothness or better responsiveness." );
+
+	cl_localTime = Cvar_Get( "cl_localTime", "0", CVAR_ARCHIVE_ND );
+	Cvar_CheckRange( cl_localTime, "0", "1", CV_INTEGER );
+	Cvar_SetDescription( cl_localTime, "Local time mode: cl.serverTime advances at constant local rate instead of jumping to network-derived values.\n  0 - standard network-synced time (default)\n  1 - smooth local clock, eliminates rendering jitter from network\n" );
 
 	cl_shownet = Cvar_Get ("cl_shownet", "0", CVAR_TEMP );
 	Cvar_SetDescription( cl_shownet, "Toggle the display of current network status." );
