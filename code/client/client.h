@@ -474,6 +474,30 @@ void CL_SendCmd( void );
 void CL_WritePacket( int repeat );
 
 //
+// cl_control - launcher demo-player control channel
+//
+void CL_Control_Init( void );
+void CL_Control_Shutdown( void );
+void CL_Control_Frame( void );
+
+// demo seeking (launcher demo player)
+extern int cl_demoStartTime;	// serverTime of the demo's first snapshot
+extern int cl_demoSeek;			// pending absolute target serverTime, -1 = none
+extern qboolean cl_demoPlayer;	// launcher is driving this demo
+extern int cl_demoTotalTime;	// demo end serverTime (0 = not measured yet)
+extern qboolean cl_demoAtEnd;	// playback hit the end (frozen on last frame)
+extern qboolean cl_demoReinit;	// in a backward-seek cgame re-init (skip paging work)
+extern qboolean cl_demoPaused;	// demo player pause (holds the clock, timescale stays 1)
+void CL_SeekDemo( int posMs );	// seek to posMs from the demo's start
+void CL_DemoEnd( void );		// end-of-stream (player mode freezes, else completes)
+
+// cl_democache - keyframe cache for smooth bidirectional demo seeking
+void CL_DemoCacheTrack( void );		// capture a keyframe at the playback frontier
+void CL_DemoCacheSeekTo( int target );	// restore nearest keyframe <= target
+void CL_DemoCacheReset( void );		// forget keyframes (new demo)
+void CL_DemoCacheFree( void );		// release the keyframe memory
+
+//
 // cl_keys.c
 //
 extern  field_t     chatField;

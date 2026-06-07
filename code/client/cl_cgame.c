@@ -533,7 +533,12 @@ static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		// We can't call Com_EventLoop here, a restart will crash and this _does_ happen
 		// if there is a map change while we are downloading at pk3.
 		// ZOID
-		SCR_UpdateScreen();
+		// Demo backward-seek re-init: suppress the cgame's loading-screen draw so
+		// the last rendered demo frame stays on screen until the target frame is
+		// drawn - no loading-screen flash / jumpcut while scrubbing.
+		if ( !cl_demoReinit ) {
+			SCR_UpdateScreen();
+		}
 		return 0;
 	case CG_CM_LOADMAP:
 		CL_CM_LoadMap( VMA(1) );
@@ -883,15 +888,21 @@ void CL_InitCGame( void ) {
 
 	t2 = Sys_Milliseconds();
 
-	Com_Printf( "CL_InitCGame: %5.2f seconds\n", (t2-t1)/1000.0 );
+	if ( !cl_demoReinit ) {
+		Com_Printf( "CL_InitCGame: %5.2f seconds\n", (t2-t1)/1000.0 );
+	}
 
 	// have the renderer touch all its images, so they are present
-	// on the card even if the driver does deferred loading
-	re.EndRegistration();
+	// on the card even if the driver does deferred loading.
+	// Skip on a demo backward-seek re-init: the assets are already resident and
+	// touching them every seek would add a needless hitch.
+	if ( !cl_demoReinit ) {
+		re.EndRegistration();
 
-	// make sure everything is paged in
-	if (!Sys_LowPhysicalMemory()) {
-		Com_TouchMemory();
+		// make sure everything is paged in
+		if (!Sys_LowPhysicalMemory()) {
+			Com_TouchMemory();
+		}
 	}
 
 	// clear anything that got printed
@@ -1153,8 +1164,23 @@ void CL_SetCGameTime( void ) {
 	}
 	cl.oldFrameServerTime = cl.snap.serverTime;
 
+	// demo player: capture the demo's start time (first snapshot) and apply a
+	// pending seek by jumping the playback clock to the target; the read-ahead
+	// loop below then fast-forwards the snapshots to it.
+	if ( clc.demoplaying ) {
+		if ( cl_demoStartTime == 0 && cl.snap.valid ) {
+			cl_demoStartTime = cl.snap.serverTime;
+		}
+		if ( cl_demoSeek >= 0 ) {
+			cl.serverTimeDelta = cl_demoSeek - cls.realtime;
+			cl.serverTime = cl_demoSeek;
+			cl.oldServerTime = cl_demoSeek - 1;
+			cl_demoSeek = -1;
+		}
+	}
+
 	// get our current view of time
-	demoFreezed = clc.demoplaying && com_timescale->value == 0.0f;
+	demoFreezed = clc.demoplaying && ( com_timescale->value == 0.0f || cl_demoPaused );
 	if ( demoFreezed ) {
 		// \timescale 0 is used to lock a demo in place for single frame advances
 		cl.serverTimeDelta -= cls.frametime;
@@ -1208,6 +1234,14 @@ void CL_SetCGameTime( void ) {
 
 	//while ( cl.serverTime >= cl.snap.serverTime ) {
 	while ( cl.serverTime - cl.snap.serverTime >= 0 ) {
+		// player mode: at the end of the demo, freeze on the last frame
+		// (clamp time so we stop advancing) instead of reading past EOF.
+		if ( cl_demoAtEnd ) {
+			cl.serverTime = cl.snap.serverTime;
+			cl.oldServerTime = cl.snap.serverTime;
+			cl.serverTimeDelta = cl.serverTime - cls.realtime;
+			break;
+		}
 		// feed another message, which should change
 		// the contents of cl.snap
 		CL_ReadDemoMessage();

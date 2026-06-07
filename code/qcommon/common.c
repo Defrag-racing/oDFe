@@ -120,6 +120,10 @@ qboolean	com_fullyInitialized = qfalse;
 qboolean	gw_minimized = qfalse; // this will be always true for dedicated servers
 #ifndef DEDICATED
 qboolean	gw_active = qtrue;
+// Set when the render window is a child embedded in the launcher (variant B
+// demo player). While embedded the engine must NOT grab/confine the mouse,
+// otherwise the surrounding launcher UI (transport bar) is unclickable.
+qboolean	gw_embedded = qfalse;
 #endif
 
 static char com_errorMessage[ MAXPRINTMSG ];

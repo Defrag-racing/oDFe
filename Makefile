@@ -1066,6 +1066,8 @@ Q3OBJ = \
   $(B)/client/cl_cgame.o \
   $(B)/client/cl_cin.o \
   $(B)/client/cl_console.o \
+  $(B)/client/cl_control.o \
+  $(B)/client/cl_democache.o \
   $(B)/client/cl_input.o \
   $(B)/client/cl_keys.o \
   $(B)/client/cl_main.o \

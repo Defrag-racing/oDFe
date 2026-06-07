@@ -707,14 +707,14 @@ void CL_ReadDemoMessage( void ) {
 	int			s;
 
 	if ( clc.demofile == FS_INVALID_HANDLE ) {
-		CL_DemoCompleted();
+		CL_DemoEnd();
 		return;
 	}
 
 	// get the sequence number
 	r = FS_Read( &s, 4, clc.demofile );
 	if ( r != 4 ) {
-		CL_DemoCompleted();
+		CL_DemoEnd();
 		return;
 	}
 	clc.serverMessageSequence = LittleLong( s );
@@ -725,12 +725,12 @@ void CL_ReadDemoMessage( void ) {
 	// get the length
 	r = FS_Read( &buf.cursize, 4, clc.demofile );
 	if ( r != 4 ) {
-		CL_DemoCompleted();
+		CL_DemoEnd();
 		return;
 	}
 	buf.cursize = LittleLong( buf.cursize );
 	if ( buf.cursize == -1 ) {
-		CL_DemoCompleted();
+		CL_DemoEnd();
 		return;
 	}
 	if ( buf.cursize > buf.maxsize ) {
@@ -739,7 +739,7 @@ void CL_ReadDemoMessage( void ) {
 	r = FS_Read( buf.data, buf.cursize, clc.demofile );
 	if ( r != buf.cursize ) {
 		Com_Printf( "Demo file was truncated.\n");
-		CL_DemoCompleted();
+		CL_DemoEnd();
 		return;
 	}
 
@@ -759,6 +759,126 @@ void CL_ReadDemoMessage( void ) {
 			CL_WriteSnapshot();
 		}
 	}
+
+	// demo player: cache a keyframe at the playback frontier for fast seeking
+	CL_DemoCacheTrack();
+}
+
+
+// Demo seeking (launcher demo player). cl_demoStartTime = serverTime of the
+// demo's first snapshot (its t=0); captured in CL_SetCGameTime. cl_demoSeek =
+// pending absolute target serverTime to jump to (-1 = none), applied in
+// CL_SetCGameTime where the engine's own read-ahead loop fast-forwards to it.
+int cl_demoStartTime = 0;
+int cl_demoSeek = -1;
+// Player-mode demo state. cl_demoPlayer = launcher is driving this demo (set
+// from in_controlPort at load). In player mode the demo does NOT disconnect at
+// the end - it freezes on the last frame so you can still seek backward, and
+// we learn the total length (cl_demoTotalTime). cl_demoAtEnd = read-ahead hit
+// EOF. Total length is measured by the launcher (seek to a huge time -> the
+// safe end-freeze captures cl_demoTotalTime -> seek back to 0).
+qboolean cl_demoPlayer = qfalse;
+int cl_demoTotalTime = 0;
+qboolean cl_demoAtEnd = qfalse;
+// Set true around the CL_ShutdownCGame + CL_InitCGame done on a backward seek,
+// so CL_InitCGame skips its first-load-only paging work (Com_TouchMemory /
+// re.EndRegistration) - the assets are already resident, this is just a reset.
+qboolean cl_demoReinit = qfalse;
+// Demo player pause. Freezes the demo clock like "timescale 0" does, but WITHOUT
+// setting timescale to 0 - that specific path makes the cgame draw its
+// "Connection Interrupted" icon. Here timescale stays 1 and CL_SetCGameTime just
+// holds cl.serverTime, which the cgame is happy with.
+qboolean cl_demoPaused = qfalse;
+
+/*
+=================
+CL_DemoEnd
+
+Called when the demo stream is exhausted. In launcher player mode we keep the
+demo loaded and frozen on the last frame (recording the total length) instead
+of disconnecting, so the user can still scrub backward.
+=================
+*/
+void CL_DemoEnd( void ) {
+	if ( cl_demoPlayer ) {
+		if ( cl.snap.serverTime > cl_demoTotalTime ) {
+			cl_demoTotalTime = cl.snap.serverTime;
+		}
+		cl_demoAtEnd = qtrue;
+		return;
+	}
+	CL_DemoCompleted();
+}
+
+/*
+=================
+CL_SeekDemo
+
+Jump demo playback to posMs milliseconds from the demo's start. Forward seeks
+just move the playback clock ahead and let the normal read-ahead catch up;
+backward seeks (the demo stream can't rewind) restart the demo from the
+beginning and then fast-forward to the target.
+=================
+*/
+void CL_SeekDemo( int posMs ) {
+	int target;
+
+	if ( !clc.demoplaying ) {
+		return;
+	}
+	if ( posMs < 0 ) {
+		posMs = 0;
+	}
+	// clamp to the measured length so a seek can't run off the end
+	if ( cl_demoTotalTime > 0 && cl_demoStartTime + posMs > cl_demoTotalTime ) {
+		posMs = cl_demoTotalTime - cl_demoStartTime;
+	}
+
+	// absolute target server time (relative to this demo's first snapshot)
+	target = cl_demoStartTime + posMs;
+
+	// leaving the end-of-demo freeze; allow the read-ahead to run again
+	cl_demoAtEnd = qfalse;
+
+	// backward: restore the nearest cached keyframe and re-init the cgame there
+	// (no map reload). forward: nothing here, the read-ahead fast-forwards.
+	CL_DemoCacheSeekTo( target );
+
+	// applied next CL_SetCGameTime, which fast-forwards the read-ahead to it
+	cl_demoSeek = target;
+}
+
+/*
+=================
+CL_SeekDemo_f
+
+Console command: "seekdemo <ms>" - jump to <ms> from the demo's start.
+Driven by the launcher control channel.
+=================
+*/
+static void CL_SeekDemo_f( void ) {
+	if ( Cmd_Argc() != 2 ) {
+		Com_Printf( "seekdemo <milliseconds from demo start>\n" );
+		return;
+	}
+	CL_SeekDemo( atoi( Cmd_Argv( 1 ) ) );
+}
+
+/*
+=================
+CL_DemoPause_f
+
+Console command: "demopause <0|1>" - pause/resume demo playback without touching
+timescale (so the cgame doesn't show "Connection Interrupted"). Driven by the
+launcher control channel.
+=================
+*/
+static void CL_DemoPause_f( void ) {
+	if ( Cmd_Argc() != 2 ) {
+		Com_Printf( "demopause <0|1>\n" );
+		return;
+	}
+	cl_demoPaused = ( atoi( Cmd_Argv( 1 ) ) != 0 ) ? qtrue : qfalse;
 }
 
 
@@ -949,6 +1069,21 @@ static void CL_PlayDemo_f( void ) {
 	// don't get the first snapshot this frame, to prevent the long
 	// time from the gamestate load from messing causing a time skip
 	clc.firstDemoFrameSkipped = qfalse;
+
+	// fresh demo: reset the seek state and keyframe cache. (Backward seeking
+	// no longer re-enters here - it restores a cached keyframe instead - so
+	// this only runs for a genuinely new demo load.)
+	cl_demoStartTime = 0;
+	cl_demoAtEnd = qfalse;
+	cl_demoTotalTime = 0;
+	cl_demoSeek = -1;
+	cl_demoReinit = qfalse;
+	cl_demoPaused = qfalse;
+	CL_DemoCacheReset();
+	// launcher-driven (player) mode when a control channel is configured: the
+	// demo then freezes at its end instead of disconnecting, and builds the
+	// keyframe cache for smooth seeking.
+	cl_demoPlayer = ( Cvar_VariableIntegerValue( "in_controlPort" ) > 0 ) ? qtrue : qfalse;
 }
 
 
@@ -2993,6 +3128,9 @@ void CL_Frame( int msec, int realMsec ) {
 		return;
 	}
 
+	// poll the launcher control channel (commands in, demo status out)
+	CL_Control_Frame();
+
 	// save the msec before checking pause
 	cls.realFrametime = realMsec;
 
@@ -4059,6 +4197,8 @@ void CL_Init( void ) {
 	Cmd_AddCommand( "dlmap", CL_Download_f );
 #endif
 	Cmd_AddCommand( "modelist", CL_ModeList_f );
+	Cmd_AddCommand( "seekdemo", CL_SeekDemo_f );
+	Cmd_AddCommand( "demopause", CL_DemoPause_f );
 
 	Cvar_Set( "cl_running", "1" );
 #ifdef USE_MD5
@@ -4066,6 +4206,9 @@ void CL_Init( void ) {
 #endif
 	Cvar_Get( "cl_guid", "", CVAR_USERINFO | CVAR_ROM | CVAR_PROTECTED );
 	CL_UpdateGUID( NULL, 0 );
+
+	// launcher demo-player control channel (no-op unless in_controlPort > 0)
+	CL_Control_Init();
 
 	Com_Printf( "----- Client Initialization Complete -----\n" );
 }
@@ -4095,6 +4238,10 @@ void CL_Shutdown( const char *finalmsg, qboolean quit ) {
 
 	noGameRestart = quit;
 	CL_Disconnect( qfalse );
+
+	// close the launcher control channel + release the demo keyframe cache
+	CL_Control_Shutdown();
+	CL_DemoCacheFree();
 
 	// clear and mute all sounds until next registration
 	S_DisableSounds();

@@ -627,6 +627,11 @@ static qboolean GLW_CreateWindow( int width, int height, int colorbits, qboolean
 	int				exstyle;
 	qboolean		oldFullscreen;
 	qboolean		res = qfalse;
+	// Embedded-player mode: when the launcher passes a parent HWND via
+	// "+set in_embedParent <handle>", the engine creates its render window
+	// as a child of that handle (a host region inside the launcher window)
+	// instead of a top-level window. 0/unset -> normal standalone window.
+	HWND			embedParent;
 
 	//
 	// register the window class if necessary
@@ -679,7 +684,29 @@ static qboolean GLW_CreateWindow( int width, int height, int colorbits, qboolean
 		
 		g_wv.borderless = 0;
 
-		if ( cdsFullscreen )
+		// Parse the launcher-supplied parent window handle. Stored as a
+		// decimal/hex string so it survives the cvar system intact on
+		// 64-bit (an int cvar would truncate a real HWND).
+		{
+			const cvar_t *embed = Cvar_Get( "in_embedParent", "0", CVAR_LATCH );
+			embedParent = (HWND)(intptr_t)_strtoui64( embed->string, NULL, 0 );
+		}
+
+		if ( embedParent )
+		{
+			// Child of the launcher's host region: borderless, no taskbar
+			// entry, clipped to its parent. Fills the parent's client area;
+			// the launcher resizes us via SetWindowPos when its layout
+			// changes. cdsFullscreen is forced off in this mode.
+			exstyle = 0;
+			stylebits = WS_VISIBLE | WS_CHILD | WS_CLIPSIBLINGS;
+			g_wv.borderless = 1;
+			cdsFullscreen = qfalse;
+			// Embedded: never grab/confine the mouse, so the surrounding
+			// launcher UI (transport bar) stays clickable during playback.
+			gw_embedded = qtrue;
+		}
+		else if ( cdsFullscreen )
 		{
 			exstyle = WINDOW_ESTYLE_FULLSCREEN;
 			stylebits = WINDOW_STYLE_FULLSCREEN;
@@ -729,13 +756,28 @@ static qboolean GLW_CreateWindow( int width, int height, int colorbits, qboolean
 				y = glw_state.desktopY;
 		}
 
+		if ( embedParent )
+		{
+			// Position at the parent's origin and match its client size;
+			// the launcher keeps us sized via SetWindowPos afterwards.
+			RECT pr;
+			if ( GetClientRect( embedParent, &pr ) ) {
+				w = pr.right - pr.left;
+				h = pr.bottom - pr.top;
+			}
+			if ( w < 1 ) w = width;
+			if ( h < 1 ) h = height;
+			x = 0;
+			y = 0;
+		}
+
 		stylebits &= ~WS_VISIBLE; // show window only after successive OpenGL/Vulkan initialization
-			
+
 		oldFullscreen = glw_state.cdsFullscreen;
 		glw_state.cdsFullscreen = cdsFullscreen;
 
 		g_wv.hWnd = CreateWindowEx( exstyle, TEXT(CLIENT_WINDOW_TITLE), AtoW(cl_title),
-			 stylebits, x, y, w, h, NULL, NULL, g_wv.hInstance,  NULL );
+			 stylebits, x, y, w, h, embedParent, NULL, g_wv.hInstance,  NULL );
 
 		if ( !g_wv.hWnd )
 		{

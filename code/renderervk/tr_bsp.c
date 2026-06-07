@@ -2284,6 +2284,11 @@ void RE_LoadWorldMap( const char *name ) {
 	byte		*startMarker;
 
 	if ( tr.worldMapLoaded ) {
+		// Demo player: a backward seek re-inits the cgame, which re-issues this
+		// load for the SAME map. Skip the reload instead of erroring.
+		if ( tr.world && !strcmp( tr.world->name, name ) ) {
+			return;
+		}
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map" );
 	}
 

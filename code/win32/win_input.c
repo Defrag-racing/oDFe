@@ -762,6 +762,12 @@ static void IN_ActivateMouse( void )
 	if ( !s_wmv.mouseInitialized )
 		return;
 
+	// Never grab the mouse while embedded in the launcher window.
+	if ( gw_embedded ) {
+		s_wmv.mouseActive = qfalse;
+		return;
+	}
+
 	if ( !in_mouse->integer ) {
 		s_wmv.mouseActive = qfalse;
 		return;
@@ -1255,7 +1261,7 @@ void IN_Frame( void ) {
 		}
 	}
 
-	if ( !gw_active || gw_minimized || in_nograb->integer ) {
+	if ( !gw_active || gw_minimized || in_nograb->integer || gw_embedded ) {
 		IN_DeactivateMouse();
 		return;
 	}

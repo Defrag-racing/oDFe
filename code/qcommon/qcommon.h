@@ -1052,6 +1052,7 @@ extern	int		com_frameTime;
 #ifndef DEDICATED
 extern	qboolean	gw_minimized;
 extern	qboolean	gw_active;
+extern	qboolean	gw_embedded;
 #endif
 
 extern	qboolean	com_errorEntered;
