@@ -586,15 +586,33 @@ static void CL_FinishMove( usercmd_t *cmd ) {
 
 	// During demo playback no usercmds are ever sent (CL_ReadyToSendPacket
 	// bails on demos); they're only read locally by the cgame's
-	// "Connection Interrupted" heuristic, which draws the centered text + the
-	// bottom-right phone-jack icon when the newest buffered usercmd has run
-	// past the last snapshot's commandTime. At low timescale the demo clock
-	// barely advances per real frame, so freshly created usercmds pile up just
-	// past that commandTime and the icon wrongly appears. Clamp the stamp to
-	// the snapshot's commandTime so the heuristic never fires while WE drive
-	// playback (pause already avoids it via cl_demoPaused / timescale 0).
-	if ( clc.demoplaying && cl.snap.valid && cmd->serverTime > cl.snap.ps.commandTime ) {
-		cmd->serverTime = cl.snap.ps.commandTime;
+	// "Connection Interrupted" heuristic (CG_DrawDisconnect), which draws the
+	// centered text + the bottom-right phone-jack icon when the newest buffered
+	// usercmd's serverTime has run past the commandTime of the snapshot the
+	// cgame is currently rendering. We drive the clock ourselves here, so that
+	// is always a false positive - clamp the stamp so it can never trip.
+	//
+	// Clamping to cl.snap.ps.commandTime (the engine's NEWEST snapshot) was not
+	// enough: the cgame interpolates and renders an OLDER snapshot - the one
+	// with the largest serverTime <= cl.serverTime (cg.snap) - which lags
+	// cl.snap by up to a full snapshot. So cl.snap.ps.commandTime sat ABOVE the
+	// commandTime the cgame actually compares against, and the icon still
+	// flashed intermittently - most visibly while paused, where cl.snap is
+	// parked one snapshot ahead of the frozen render time. Clamp instead to the
+	// commandTime of that render snapshot, matching cg.snap exactly.
+	if ( clc.demoplaying && cl.snap.valid ) {
+		int renderCmdTime = cl.snap.ps.commandTime;
+		int n;
+		for ( n = cl.snap.messageNum; n > cl.snap.messageNum - PACKET_BACKUP && n >= 0; n-- ) {
+			const clSnapshot_t *s = &cl.snapshots[n & PACKET_MASK];
+			if ( s->valid && s->serverTime <= cl.serverTime ) {
+				renderCmdTime = s->ps.commandTime;
+				break;
+			}
+		}
+		if ( cmd->serverTime > renderCmdTime ) {
+			cmd->serverTime = renderCmdTime;
+		}
 	}
 
 	for (i=0 ; i<3 ; i++) {
