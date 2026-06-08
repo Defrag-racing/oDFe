@@ -1,20 +1,10 @@
 name: build
 
 on:
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - '*.txt'
-      - '.gitignore'
-      - 'docs/*'
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**.md'
-      - '*.txt'
-      - '.gitignore'
-      - 'docs/*'
+  # Manual only for routine builds (no push/PR) so the large build matrix
+  # doesn't burn Actions minutes on every commit. Run it on demand from the
+  # Actions tab or `gh workflow run build.yml`. Still builds automatically when
+  # a GitHub release is published.
   release:
     types: [published]
 
