@@ -13,7 +13,13 @@
     <ClCompile Include="..\..\client\cl_console.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\client\cl_control.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\client\cl_curl.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\client\cl_democache.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\client\cl_input.c">

@@ -271,7 +271,9 @@
     <ClCompile Include="..\..\client\cl_cgame.c" />
     <ClCompile Include="..\..\client\cl_cin.c" />
     <ClCompile Include="..\..\client\cl_console.c" />
+    <ClCompile Include="..\..\client\cl_control.c" />
     <ClCompile Include="..\..\client\cl_curl.c" />
+    <ClCompile Include="..\..\client\cl_democache.c" />
     <ClCompile Include="..\..\client\cl_input.c" />
     <ClCompile Include="..\..\client\cl_jpeg.c" />
     <ClCompile Include="..\..\client\cl_keys.c" />
