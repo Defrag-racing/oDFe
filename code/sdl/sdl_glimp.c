@@ -36,6 +36,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../renderercommon/tr_public.h"
 #include "sdl_glw.h"
 #include "sdl_icon.h"
+#include "sdl_embed.h"
 
 typedef enum {
 	RSERR_OK,
@@ -195,6 +196,10 @@ static int GLW_SetMode( int mode, const char *modeFS, qboolean fullscreen, qbool
 	int x;
 	int y;
 	Uint32 flags = SDL_WINDOW_SHOWN;
+	// Embedded-player mode: the launcher passes its host window id via
+	// "+set in_embedParent <id>"; 0/unset = normal standalone window. On the
+	// SDL path (Linux/XWayland) we reparent our window into that id below.
+	unsigned long embedParent = 0;
 
 #ifdef USE_VULKAN_API
 	if ( vulkan ) {
@@ -252,6 +257,32 @@ static int GLW_SetMode( int mode, const char *modeFS, qboolean fullscreen, qbool
 
 	Com_Printf( " %d %d\n", config->vidWidth, config->vidHeight );
 
+	// Embedded mode: render into the launcher's stage window instead of a
+	// standalone one. Size ourselves to the stage (the launcher has already
+	// letterboxed it to the demo's aspect) and force the matching aspect, so
+	// the render area exactly fills the host region with no extra bars.
+	{
+		const cvar_t *embed = Cvar_Get( "in_embedParent", "0", CVAR_LATCH );
+		embedParent = strtoul( embed->string, NULL, 0 );
+		if ( embedParent && SDLEmbed_Available() )
+		{
+			int pw = 0, ph = 0;
+			if ( SDLEmbed_ParentSize( embedParent, &pw, &ph ) && pw > 0 && ph > 0 )
+			{
+				config->vidWidth = pw;
+				config->vidHeight = ph;
+				config->windowAspect = (float)pw / (float)ph;
+			}
+			// Never grab/confine the mouse while embedded, so the launcher's
+			// transport UI around the demo stays clickable.
+			gw_embedded = qtrue;
+		}
+		else
+		{
+			embedParent = 0;
+		}
+	}
+
 	// Destroy existing state if it exists
 	if ( SDL_glContext != NULL )
 	{
@@ -278,8 +309,10 @@ static int GLW_SetMode( int mode, const char *modeFS, qboolean fullscreen, qbool
 		flags |= SDL_WINDOW_FULLSCREEN;
 #endif
 	}
-	else if ( r_noborder->integer )
+	else if ( r_noborder->integer || embedParent )
 	{
+		// Embedded: borderless so there's no decoration flash before we
+		// reparent the window into the launcher's stage.
 		flags |= SDL_WINDOW_BORDERLESS;
 	}
 
@@ -511,6 +544,17 @@ static int GLW_SetMode( int mode, const char *modeFS, qboolean fullscreen, qbool
 
 	if ( !fullscreen && r_noborder->integer )
 		SDL_SetWindowHitTest( SDL_window, SDL_HitTestFunc, NULL );
+
+	// Embedded mode: drop our window into the launcher's stage now that it
+	// exists and the GL context is ready. The launcher keeps us sized via its
+	// own X11 calls on the stage window afterwards.
+	if ( embedParent )
+	{
+		if ( !SDLEmbed_Reparent( SDL_window, embedParent ) )
+			Com_Printf( "...WARNING: could not embed into parent window 0x%lx\n", embedParent );
+		else
+			Com_Printf( "...embedded into launcher window 0x%lx\n", embedParent );
+	}
 
 #ifdef USE_VULKAN_API
 	if ( vulkan )

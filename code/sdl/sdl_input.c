@@ -1134,6 +1134,28 @@ void HandleEvents( void )
 					break;
 				}
 
+				// Embedded demo playback: while this render window holds keyboard
+				// focus the launcher's WebView never sees these keys, so its
+				// transport shortcuts (Esc close, arrows seek, Space pause) would
+				// do nothing. Forward them up the control channel instead of
+				// treating them as game input, matching the Win32 path.
+				if ( gw_embedded ) {
+					const char *fwd = NULL;
+					switch ( key ) {
+						case K_ESCAPE:     fwd = "esc";   break;
+						case K_LEFTARROW:  fwd = "left";  break;
+						case K_RIGHTARROW: fwd = "right"; break;
+						case K_UPARROW:    fwd = "up";    break;
+						case K_DOWNARROW:  fwd = "down";  break;
+						case K_SPACE:      fwd = "space"; break;
+						default:           fwd = NULL;    break;
+					}
+					if ( fwd ) {
+						CL_Control_SendKey( fwd );
+						break;
+					}
+				}
+
 				if ( key ) {
 					Com_QueueEvent( in_eventTime, SE_KEY, key, qtrue, 0, NULL );
 

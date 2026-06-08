@@ -600,7 +600,9 @@ else
 
   ifeq ($(USE_SDL),1)
     BASE_CFLAGS += $(SDL_INCLUDE)
-    CLIENT_LDFLAGS = $(SDL_LIBS)
+    # -lX11 for the embedded-player reparenting (sdl_embed.c). SDL pulls in X11
+    # dynamically but we make our own XReparentWindow/XGetGeometry calls.
+    CLIENT_LDFLAGS = $(SDL_LIBS) $(X11_LIBS)
   else
     BASE_CFLAGS += $(X11_INCLUDE)
     CLIENT_LDFLAGS = $(X11_LIBS)
@@ -1224,6 +1226,7 @@ ifdef MINGW
 ifeq ($(USE_SDL),1)
     Q3OBJ += \
         $(B)/client/sdl_glimp.o \
+        $(B)/client/sdl_embed.o \
         $(B)/client/sdl_gamma.o \
         $(B)/client/sdl_input.o \
         $(B)/client/sdl_snd.o
@@ -1257,6 +1260,7 @@ else # !MINGW
 ifeq ($(USE_SDL),1)
     Q3OBJ += \
         $(B)/client/sdl_glimp.o \
+        $(B)/client/sdl_embed.o \
         $(B)/client/sdl_gamma.o \
         $(B)/client/sdl_input.o \
         $(B)/client/sdl_snd.o
