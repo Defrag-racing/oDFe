@@ -187,6 +187,30 @@ static void CL_Control_DrainLines( void ) {
 	}
 }
 
+/*
+==================
+CL_Control_SendKey
+
+Forward a transport key the engine window swallowed while it held keyboard
+focus (embedded demo playback) up to the launcher, so its shortcut handler
+runs even though the WebView never saw the keydown. Names are the normalized
+tokens the launcher understands: "esc", "left", "right", "up", "down", "space".
+Best-effort; silently ignored if no launcher is connected.
+==================
+*/
+void CL_Control_SendKey( const char *name ) {
+	char	msg[64];
+	int		len;
+
+	if ( control_client == INVALID_SOCKET ) {
+		return;
+	}
+	len = Com_sprintf( msg, sizeof( msg ), "key %s\n", name );
+	if ( send( control_client, msg, len, 0 ) == SOCKET_ERROR ) {
+		// peer gone; the frame loop's recv will notice the close
+	}
+}
+
 static void CL_Control_SendStatus( void ) {
 	char	msg[128];
 	int		len;

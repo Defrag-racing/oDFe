@@ -479,6 +479,7 @@ void CL_WritePacket( int repeat );
 void CL_Control_Init( void );
 void CL_Control_Shutdown( void );
 void CL_Control_Frame( void );
+void CL_Control_SendKey( const char *name );
 
 // demo seeking (launcher demo player)
 extern int cl_demoStartTime;	// serverTime of the demo's first snapshot

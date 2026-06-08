@@ -944,6 +944,27 @@ LRESULT WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM  wParam, LPARAM lParam 
 			Cbuf_AddText( "vid_restart\n" );
 			return 0;
 		}
+		// Embedded demo playback: while the render window holds keyboard focus
+		// the launcher's WebView never sees these keys, so its transport
+		// shortcuts (Esc close, arrows seek, Space pause) would do nothing.
+		// Forward them up the control channel instead of letting the engine
+		// treat them as game input, so the shortcuts work whether the launcher
+		// UI or the demo window is focused.
+		if ( gw_embedded ) {
+			const char *fwd = NULL;
+			switch ( wParam ) {
+				case VK_ESCAPE: fwd = "esc";   break;
+				case VK_LEFT:   fwd = "left";  break;
+				case VK_RIGHT:  fwd = "right"; break;
+				case VK_UP:     fwd = "up";    break;
+				case VK_DOWN:   fwd = "down";  break;
+				case VK_SPACE:  fwd = "space"; break;
+			}
+			if ( fwd ) {
+				CL_Control_SendKey( fwd );
+				return 0;
+			}
+		}
 		//Com_Printf( "^2k+^7 wParam:%08x lParam:%08x\n", wParam, lParam );
 		Sys_QueEvent( g_wv.sysMsgTime, SE_KEY, MapKey( wParam, lParam ), qtrue, 0, NULL );
 		break;
