@@ -584,6 +584,19 @@ static void CL_FinishMove( usercmd_t *cmd ) {
 	// can be determined without allowing cheating
 	cmd->serverTime = cl.serverTime;
 
+	// During demo playback no usercmds are ever sent (CL_ReadyToSendPacket
+	// bails on demos); they're only read locally by the cgame's
+	// "Connection Interrupted" heuristic, which draws the centered text + the
+	// bottom-right phone-jack icon when the newest buffered usercmd has run
+	// past the last snapshot's commandTime. At low timescale the demo clock
+	// barely advances per real frame, so freshly created usercmds pile up just
+	// past that commandTime and the icon wrongly appears. Clamp the stamp to
+	// the snapshot's commandTime so the heuristic never fires while WE drive
+	// playback (pause already avoids it via cl_demoPaused / timescale 0).
+	if ( clc.demoplaying && cl.snap.valid && cmd->serverTime > cl.snap.ps.commandTime ) {
+		cmd->serverTime = cl.snap.ps.commandTime;
+	}
+
 	for (i=0 ; i<3 ; i++) {
 		cmd->angles[i] = ANGLE2SHORT(cl.viewangles[i]);
 	}
