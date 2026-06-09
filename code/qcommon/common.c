@@ -2999,7 +2999,7 @@ static void Com_ExecuteCfg( void )
 	if (!Com_SafeMode())
 	{
 		// skip the q3config.cfg and autoexec.cfg if "safe" is on the command line
-		Cbuf_ExecuteText(EXEC_NOW, "exec " Q3CONFIG_CFG "\n");
+		Cbuf_ExecuteText(EXEC_NOW, va( "exec %s\n", Com_ConfigName() ));
 		Cbuf_Execute();
 		Cbuf_ExecuteText(EXEC_NOW, "exec autoexec.cfg\n");
 		Cbuf_Execute();
@@ -4067,6 +4067,29 @@ static void Com_WriteConfigToFile( const char *filename ) {
 
 /*
 ===============
+Com_ConfigName
+
+The config file the engine reads at startup and writes on exit. Normally
+q3config.cfg, but when the Defrag Racing Launcher embeds us as a demo player
+(it passes "+set in_embedParent <handle>") we use a SEPARATE file so the
+demo-player engine never reads or overwrites the user's real q3config.cfg -
+the launcher seeds defrag.launcher.cfg from q3config.cfg before each run, and
+our injected cvars (in_nograb, con_notifytime, ...) stay contained there.
+===============
+*/
+const char *Com_ConfigName( void ) {
+#ifndef DEDICATED
+	const cvar_t *embed = Cvar_Get( "in_embedParent", "0", CVAR_LATCH );
+	if ( embed->string[0] && Q_stricmp( embed->string, "0" ) != 0 ) {
+		return "defrag.launcher.cfg";
+	}
+#endif
+	return Q3CONFIG_CFG;
+}
+
+
+/*
+===============
 Com_WriteConfiguration
 
 Writes key bindings and archived cvars to config file if modified
@@ -4088,7 +4111,7 @@ void Com_WriteConfiguration( void ) {
 	}
 	cvar_modifiedFlags &= ~CVAR_ARCHIVE;
 
-	Com_WriteConfigToFile( Q3CONFIG_CFG );
+	Com_WriteConfigToFile( Com_ConfigName() );
 
 #ifndef DEDICATED
 	gamedir = FS_GetCurrentGameDir();

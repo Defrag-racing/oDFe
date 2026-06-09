@@ -409,7 +409,7 @@ static void Cmd_Exec_f( void ) {
 	Cbuf_InsertText( f.c );
 
 #ifdef DELAY_WRITECONFIG
-	if ( !Q_stricmp( filename, Q3CONFIG_CFG ) ) {
+	if ( !Q_stricmp( filename, Com_ConfigName() ) ) {
 		Com_WriteConfiguration(); // to avoid loading outdated values
 	}
 #endif
