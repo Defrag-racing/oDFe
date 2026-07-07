@@ -638,16 +638,29 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 		SET_OBJECT_NAME( vk.swapchain_rendering_finished[i], va( "swapchain_rendering_finished semaphore %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_SEMAPHORE_EXT );
 	}
 
-	if ( vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED ) {
+#if 0
+	if (vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
 		VkCommandBuffer command_buffer = begin_command_buffer();
 
-		for ( i = 0; i < vk.swapchain_image_count; i++ ) {
-			record_image_layout_transition( command_buffer, vk.swapchain_images[i],
+		for (i = 0; i < vk.swapchain_image_count; i++) {
+			record_image_layout_transition(command_buffer, vk.swapchain_images[i],
 				VK_IMAGE_ASPECT_COLOR_BIT,
-				VK_IMAGE_LAYOUT_UNDEFINED, vk.initSwapchainLayout, 0, 0 );
+				VK_IMAGE_LAYOUT_UNDEFINED, vk.initSwapchainLayout, 0, 0);
 		}
 
-		end_command_buffer( command_buffer, __func__ );
+		end_command_buffer(command_buffer, __func__);
+	}
+#endif
+
+	for ( i = 0; i < vk.swapchain_image_count; i++ ) {
+		if ( vk.initSwapchainLayout != VK_IMAGE_LAYOUT_UNDEFINED ) {
+			// The Vulkan spec states : Use of a presentable image must occur only after the image is returned by vkAcquireNextImageKHR,
+			// and before it is released by vkQueuePresentKHR.
+			// This includes transitioning the image layout and rendering commands(https ://docs.vulkan.org/refpages/latest/refpages/source/VkSwapchainKHR.html#_description)
+			vk.swapchain_images_inited[i] = qfalse;
+		} else {
+			vk.swapchain_images_inited[i] = qtrue; // assume undefined layout
+		}
 	}
 }
 
@@ -3951,7 +3964,7 @@ void vk_initialize( void )
 
 	vk.cmd = vk.tess + 0;
 	vk.uniform_alignment = props.limits.minUniformBufferOffsetAlignment;
-	vk.uniform_item_size = PAD( sizeof( vkUniform_t ), vk.uniform_alignment );
+	vk.uniform_item_size = PAD( (uint32_t)sizeof( vkUniform_t ), vk.uniform_alignment );
 
 	// for flare visibility tests
 	vk.storage_alignment = MAX( props.limits.minStorageBufferOffsetAlignment, sizeof( uint32_t ) );
@@ -4100,6 +4113,21 @@ void vk_initialize( void )
 
 	Com_sprintf( glConfig.version_string, sizeof( glConfig.version_string ), "API: %i.%i.%i, Driver: %s",
 		major, minor, patch, driver_version );
+
+#ifdef _WIN32
+	// Intel iGPU drivers from 101.5333 to 101.6737 have a known bug that causes
+	// VK_ERROR_DEVICE_LOST during vkQueueSubmit, see https://github.com/ec-/Quake3e/issues/312
+	if ( props.vendorID == 0x8086 ) {
+		uint32_t drvMajor = props.driverVersion >> 14;
+		uint32_t drvMinor = props.driverVersion & 0x3FFF;
+		if ( drvMajor == 101 && drvMinor >= 5333 && drvMinor <= 6737 ) {
+			Com_sprintf( vk.driverNote, sizeof( vk.driverNote ), S_COLOR_WARNING
+				"\nWARNING: Intel driver %i.%i is known to cause Vulkan crashes.\n"
+				"Consider updating to driver >= 101.6790 or downgrading to <= 101.5186.\n",
+				drvMajor, drvMinor );
+		}
+	}
+#endif
 
 	vk.offscreenRender = qtrue;
 
@@ -6409,12 +6437,13 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 	Com_Memset(&attachment_blend_state, 0, sizeof(attachment_blend_state));
 	attachment_blend_state.blendEnable = (state_bits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) ? VK_TRUE : VK_FALSE;
 
-	if (def->shadow_phase == SHADOW_EDGES || def->shader_type == TYPE_SIGNLE_TEXTURE_DF)
+	if ( def->shadow_phase == SHADOW_EDGES || def->shader_type == TYPE_SIGNLE_TEXTURE_DF || def->shader_type == TYPE_DOT ) {
 		attachment_blend_state.colorWriteMask = 0;
-	else
+	} else {
 		attachment_blend_state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	}
 
-	if (attachment_blend_state.blendEnable) {
+	if ( attachment_blend_state.blendEnable ) {
 		switch (state_bits & GLS_SRCBLEND_BITS) {
 			case GLS_SRCBLEND_ZERO:
 				attachment_blend_state.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -7375,6 +7404,14 @@ _retry:
 	begin_info.pInheritanceInfo = NULL;
 
 	VK_CHECK( qvkBeginCommandBuffer( vk.cmd->command_buffer, &begin_info ) );
+
+	if ( vk.swapchain_images_inited[ vk.cmd->swapchain_image_index ] == qfalse ) {
+		// perform initial swapchain image layout transition
+		vk.swapchain_images_inited[ vk.cmd->swapchain_image_index ] = qtrue;
+		record_image_layout_transition( vk.cmd->command_buffer, vk.swapchain_images[ vk.cmd->swapchain_image_index ],
+			VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, vk.initSwapchainLayout,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0 );
+	}
 
 	// Ensure visibility of geometry buffers writes.
 	//record_buffer_memory_barrier( vk.cmd->command_buffer, vk.cmd->vertex_buffer, vk.geometry_buffer_size, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT );

@@ -324,7 +324,7 @@ typedef struct vk_tess_s {
 
 	VkBuffer vertex_buffer;
 	byte *vertex_buffer_ptr; // pointer to mapped vertex buffer
-	VkDeviceSize vertex_buffer_offset;
+	uint32_t vertex_buffer_offset; // VkDeviceSize
 
 	VkDescriptorSet uniform_descriptor;
 	uint32_t		uniform_read_offset;
@@ -363,6 +363,7 @@ typedef struct {
 	VkSwapchainKHR swapchain;
 	uint32_t swapchain_image_count;
 	VkImage swapchain_images[MAX_SWAPCHAIN_IMAGES];
+	qboolean swapchain_images_inited[MAX_SWAPCHAIN_IMAGES];
 	VkImageView swapchain_image_views[MAX_SWAPCHAIN_IMAGES];
 	VkSemaphore swapchain_rendering_finished[MAX_SWAPCHAIN_IMAGES];
 	//uint32_t swapchain_image_index;
@@ -645,6 +646,8 @@ typedef struct {
 		VkDeviceSize staging_size;
 		VkDeviceSize geometry_size;
 	} defaults;
+
+	char driverNote[200];
 
 } Vk_Instance;
 

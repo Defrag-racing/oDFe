@@ -244,7 +244,7 @@ static void InitConsoleMessageHeap(void)
 
 	if (consolemessageheap) FreeMemory(consolemessageheap);
 	//
-	max_messages = (int) LibVarValue("max_messages", "1024");
+	max_messages = LibVarInteger("max_messages", "1024", 2, 65536);
 	consolemessageheap = (bot_consolemessage_t *) GetClearedHunkMemory(max_messages *
 												sizeof(bot_consolemessage_t));
 	consolemessageheap[0].prev = NULL;
@@ -365,7 +365,7 @@ void BotQueueConsoleMessage(int chatstate, int type, const char *message)
 // Returns:					-
 // Changes Globals:		-
 //===========================================================================
-int BotNextConsoleMessage(int chatstate, bot_consolemessage_t *cm)
+int BotNextConsoleMessage(int chatstate, bot_consolemessage_qvm_t *cm)
 {
 	bot_chatstate_t *cs;
 	bot_consolemessage_t *firstmsg;
@@ -374,24 +374,21 @@ int BotNextConsoleMessage(int chatstate, bot_consolemessage_t *cm)
 	if (!cs) return 0;
 	if ( (firstmsg = cs->firstmessage) != NULL )
 	{
-		cm->handle = firstmsg->handle;
-		cm->time = firstmsg->time;
-		cm->type = firstmsg->type;
-		Q_strncpyz(cm->message, firstmsg->message,
-			   sizeof(cm->message));
-		
-		/* We omit setting the two pointers in cm because pointer
-		 * size in the VM differs between the size in the engine on
-		 * 64 bit machines, which would lead to a buffer overflow if
-		 * this functions is called from the VM. The pointers are
-		 * of no interest to functions calling
-		 * BotNextConsoleMessage anyways.
-		 */
-		
-		return cm->handle;
-	} //end if
+		if ( cm != NULL )
+		{
+			cm->handle = firstmsg->handle;
+			cm->time = firstmsg->time;
+			cm->type = firstmsg->type;
+			Q_strncpyz( cm->message, firstmsg->message, sizeof( cm->message ) );
+			cm->next = 0;
+			cm->prev = 0;
+		}
+		return firstmsg->handle;
+	}
 	return 0;
-} //end of the function BotConsoleMessage
+}
+
+
 //===========================================================================
 //
 // Parameter:				-
@@ -621,9 +618,10 @@ static void BotDumpSynonymList(bot_synonymlist_t *synlist)
 //===========================================================================
 static bot_synonymlist_t *BotLoadSynonyms( const char *filename )
 {
-	int pass, size, contextlevel, numsynonyms;
+	int pass, contextlevel, numsynonyms;
 	unsigned long int context, contextstack[32];
 	char *ptr = NULL;
+	size_t size;
 	source_t *source;
 	token_t token;
 	bot_synonymlist_t *synlist, *lastsyn, *syn;
@@ -710,14 +708,14 @@ static bot_synonymlist_t *BotLoadSynonyms( const char *filename )
 							return NULL;
 						} //end if
 						StripDoubleQuotes(token.string);
-						len = (int)strlen(token.string);
+						len = strlen(token.string);
 						if (len==0)
 						{
 							SourceError(source, "empty string");
 							FreeSource(source);
 							return NULL;
 						} //end if
-						len = PAD(len+1, sizeof(long));
+						len = PAD(len+1, sizeof(uintptr_t));
 						size += sizeof(bot_synonym_t) + len;
 						if (pass && ptr)
 						{
@@ -1018,13 +1016,13 @@ static void BotDumpRandomStringList(bot_randomlist_t *randomlist)
 //===========================================================================
 static bot_randomlist_t *BotLoadRandomStrings( const char *filename )
 {
-	int pass, size;
+	int pass;
 	char *ptr = NULL, chatmessagestring[MAX_MESSAGE_SIZE];
 	source_t *source;
 	token_t token;
 	bot_randomlist_t *randomlist, *lastrandom, *random;
 	bot_randomstring_t *randomstring;
-	size_t len;
+	size_t size, len;
 
 #ifdef DEBUG
 	int starttime = Sys_MilliSeconds();
@@ -1059,7 +1057,7 @@ static bot_randomlist_t *BotLoadRandomStrings( const char *filename )
 				return NULL;
 			} //end if
 			len = strlen(token.string) + 1;
-			len = PAD(len, sizeof(long));
+			len = PAD(len, sizeof(uintptr_t));
 			size += sizeof(bot_randomlist_t) + len;
 			if (pass && ptr)
 			{
@@ -1089,7 +1087,7 @@ static bot_randomlist_t *BotLoadRandomStrings( const char *filename )
 					return NULL;
 				} //end if
 				len = strlen(chatmessagestring) + 1;
-				len = PAD(len, sizeof(long));
+				len = PAD(len, sizeof(uintptr_t));
 				size += sizeof(bot_randomstring_t) + len;
 				if (pass && ptr)
 				{
@@ -2097,7 +2095,8 @@ static void BotDumpInitialChat(bot_chat_t *chat)
 //===========================================================================
 static bot_chat_t *BotLoadInitialChat(const char *chatfile, const char *chatname)
 {
-	int pass, foundchat, indent, size;
+	int pass, foundchat, indent;
+	size_t size;
 	char *ptr = NULL;
 	char chatmessagestring[MAX_MESSAGE_SIZE];
 	source_t *source;
@@ -2199,7 +2198,7 @@ static bot_chat_t *BotLoadInitialChat(const char *chatfile, const char *chatname
 								return NULL;
 							} //end if
 							len = strlen(chatmessagestring) + 1;
-							len = PAD(len, sizeof(long));
+							len = PAD(len, sizeof(uintptr_t));
 							if (pass && ptr)
 							{
 								chatmessage = (bot_chatmessage_t *) ptr;
@@ -3061,7 +3060,6 @@ int BotAllocChatState(void)
 //========================================================================
 void BotFreeChatState(int handle)
 {
-	bot_consolemessage_t m;
 	int h;
 
 	if (handle <= 0 || handle > MAX_CLIENTS)
@@ -3079,7 +3077,7 @@ void BotFreeChatState(int handle)
 		BotFreeChatFile(handle);
 	} //end if
 	//free all the console messages left in the chat state
-	for (h = BotNextConsoleMessage(handle, &m); h; h = BotNextConsoleMessage(handle, &m))
+	for (h = BotNextConsoleMessage(handle, NULL); h; h = BotNextConsoleMessage(handle, NULL))
 	{
 		//remove the console message
 		BotRemoveConsoleMessage(handle, h);

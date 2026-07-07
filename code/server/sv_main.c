@@ -1048,7 +1048,7 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 	if ( !memcmp( "connect ", msg->data + 4, 8 ) ) {
 		if ( msg->cursize > MAX_INFO_STRING*2 ) { // if we assume 200% compression ratio on userinfo
 			if ( com_developer->integer ) {
-				Com_Printf( "%s : connect packet is too long - %i\n", NET_AdrToString( from ), msg->cursize );
+				Com_Printf( S_COLOR_DEVEL "%s : connect packet is too long - %i\n", NET_AdrToString( from ), msg->cursize );
 			}
 			return;
 		}
@@ -1093,7 +1093,7 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		// sequenced messages to the old client
 	} else {
 		if ( com_developer->integer ) {
-			Com_Printf( "bad connectionless packet from %s:\n%s\n",
+			Com_Printf( S_COLOR_DEVEL "bad connectionless packet from %s:\n%s\n",
 				NET_AdrToString( from ), s );
 		}
 	}
@@ -1330,10 +1330,8 @@ int SV_FrameMsec( void )
 {
 	if ( sv_fps )
 	{
-		int frameMsec;
-		
-		frameMsec = 1000.0f / sv_fps->value;
-		
+		const int frameMsec = 1000 / sv_fps->integer;
+
 		if ( frameMsec < sv.timeResidual )
 			return 0;
 		else
@@ -1451,11 +1449,11 @@ void SV_Frame( int msec ) {
 
 	// if it isn't time for the next frame, do nothing
 
-	frameMsec = 1000 / sv_fps->integer * com_timescale->value;
+	frameMsec = (1000 / sv_fps->integer) * com_timescale->value;
 	// don't let it scale below 1ms
-	if(frameMsec < 1)
+	if (frameMsec < 1)
 	{
-		Cvar_Set( "timescale", va( "%f", sv_fps->value / 1000.0f ) );
+		Cvar_SetValue( "timescale", sv_fps->value / 1000.0f );
 		Com_DPrintf( "timescale adjusted to %f\n", com_timescale->value );
 		frameMsec = 1;
 	}
