@@ -26,6 +26,8 @@ provided the launcher also runs on the X11 backend (GDK_BACKEND=x11).
 
 #include "sdl_embed.h"
 
+#include <stdio.h>
+
 #if defined(SDL_VIDEO_DRIVER_X11)
 #include <X11/Xlib.h>
 
@@ -75,17 +77,32 @@ int SDLEmbed_Reparent( struct SDL_Window *win, unsigned long parent )
 	if ( win == NULL || parent == 0 )
 		return 0;
 
+	/* Field reports (Zorin 18.1/GNOME) showed this failing while the
+	   ParentSize query above worked, so log exactly which step breaks -
+	   the launcher captures our stderr/stdout in its terminal output. */
 	SDL_VERSION( &info.version );
 	if ( !SDL_GetWindowWMInfo( (SDL_Window *)win, &info ) )
+	{
+		fprintf( stderr, "[embed] SDL_GetWindowWMInfo failed (compiled SDL %d.%d.%d): %s\n",
+			info.version.major, info.version.minor, info.version.patch, SDL_GetError() );
 		return 0;
+	}
 
 	if ( info.subsystem != SDL_SYSWM_X11 )
+	{
+		fprintf( stderr, "[embed] window subsystem is %d, not X11 (%d)\n",
+			(int)info.subsystem, (int)SDL_SYSWM_X11 );
 		return 0;
+	}
 
 	dpy = info.info.x11.display;
 	self = info.info.x11.window;
 	if ( dpy == NULL || self == 0 )
+	{
+		fprintf( stderr, "[embed] WMInfo returned dpy=%p window=0x%lx\n",
+			(void *)dpy, (unsigned long)self );
 		return 0;
+	}
 
 	/* Move our window under the launcher's stage. Reparenting away from the
 	   root drops any window-manager decoration automatically. */
