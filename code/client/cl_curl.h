@@ -113,6 +113,10 @@ typedef struct download_s {
 	qboolean	headerCheck;
 	qboolean	mapAutoDownload;
 
+	// fallback source support
+	char		fallbackURL[MAX_OSPATH];
+	char		originalName[MAX_OSPATH];
+
 	struct func_s {
 		char*		(*version)(void);
 		char *		(*easy_escape)(CURL *curl, const char *string, int length);

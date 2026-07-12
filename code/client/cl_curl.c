@@ -898,6 +898,148 @@ static size_t Com_DL_HeaderCallback( void *ptr, size_t size, size_t nmemb, void 
 
 /*
 ===============================================================
+Com_DL_SpeedTest()
+
+Run a parallel 1-second speed test against two download sources.
+Returns 1 if source1 is faster/equal, 2 if source2 is faster.
+Returns 0 on error (use source1 as default).
+Both URLs should have %m already replaced with the actual filename.
+===============================================================
+*/
+typedef struct {
+	int bytesReceived;
+} speedTestData_t;
+
+static size_t Com_DL_SpeedTestWrite( void *ptr, size_t size, size_t nmemb, void *userdata )
+{
+	speedTestData_t *data = (speedTestData_t *)userdata;
+	data->bytesReceived += (int)( size * nmemb );
+	return size * nmemb;
+}
+
+int Com_DL_SpeedTest( download_t *dl, const char *url1, const char *url2 )
+{
+	CURL *easy1, *easy2;
+	CURLM *multi;
+	speedTestData_t data1, data2;
+	int running, startTime, elapsed;
+	float speed1, speed2;
+
+	if ( !Com_DL_Init( dl ) ) {
+		Com_Printf( S_COLOR_YELLOW "Speed test: failed to init cURL\n" );
+		return 0;
+	}
+
+	easy1 = dl->func.easy_init();
+	easy2 = dl->func.easy_init();
+	multi = dl->func.multi_init();
+
+	if ( !easy1 || !easy2 || !multi ) {
+		Com_Printf( S_COLOR_YELLOW "Speed test: failed to create cURL handles\n" );
+		if ( easy1 ) dl->func.easy_cleanup( easy1 );
+		if ( easy2 ) dl->func.easy_cleanup( easy2 );
+		if ( multi ) dl->func.multi_cleanup( multi );
+		Com_DL_Done( dl );
+		return 0;
+	}
+
+	memset( &data1, 0, sizeof( data1 ) );
+	memset( &data2, 0, sizeof( data2 ) );
+
+	// setup source 1
+	dl->func.easy_setopt( easy1, CURLOPT_URL, url1 );
+	dl->func.easy_setopt( easy1, CURLOPT_WRITEFUNCTION, Com_DL_SpeedTestWrite );
+	dl->func.easy_setopt( easy1, CURLOPT_WRITEDATA, &data1 );
+	dl->func.easy_setopt( easy1, CURLOPT_FOLLOWLOCATION, 1 );
+	dl->func.easy_setopt( easy1, CURLOPT_MAXREDIRS, 5 );
+	dl->func.easy_setopt( easy1, CURLOPT_FAILONERROR, 1 );
+	dl->func.easy_setopt( easy1, CURLOPT_NOPROGRESS, 1 );
+	dl->func.easy_setopt( easy1, CURLOPT_CONNECTTIMEOUT, 3L );
+	dl->func.easy_setopt( easy1, CURLOPT_USERAGENT, Q3_VERSION );
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+	dl->func.easy_setopt( easy1, CURLOPT_PROTOCOLS_STR, ALLOWED_PROTOCOLS_STR );
+#else
+	dl->func.easy_setopt( easy1, CURLOPT_PROTOCOLS, ALLOWED_PROTOCOLS );
+#endif
+
+	// setup source 2
+	dl->func.easy_setopt( easy2, CURLOPT_URL, url2 );
+	dl->func.easy_setopt( easy2, CURLOPT_WRITEFUNCTION, Com_DL_SpeedTestWrite );
+	dl->func.easy_setopt( easy2, CURLOPT_WRITEDATA, &data2 );
+	dl->func.easy_setopt( easy2, CURLOPT_FOLLOWLOCATION, 1 );
+	dl->func.easy_setopt( easy2, CURLOPT_MAXREDIRS, 5 );
+	dl->func.easy_setopt( easy2, CURLOPT_FAILONERROR, 1 );
+	dl->func.easy_setopt( easy2, CURLOPT_NOPROGRESS, 1 );
+	dl->func.easy_setopt( easy2, CURLOPT_CONNECTTIMEOUT, 3L );
+	dl->func.easy_setopt( easy2, CURLOPT_USERAGENT, Q3_VERSION );
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+	dl->func.easy_setopt( easy2, CURLOPT_PROTOCOLS_STR, ALLOWED_PROTOCOLS_STR );
+#else
+	dl->func.easy_setopt( easy2, CURLOPT_PROTOCOLS, ALLOWED_PROTOCOLS );
+#endif
+
+	dl->func.multi_add_handle( multi, easy1 );
+	dl->func.multi_add_handle( multi, easy2 );
+
+	Com_Printf( "Speed test: testing download sources...\n" );
+
+	startTime = Sys_Milliseconds();
+
+	// run both downloads for 2 seconds
+	do {
+		dl->func.multi_perform( multi, &running );
+		elapsed = Sys_Milliseconds() - startTime;
+		if ( running == 0 )
+			break;
+	} while ( elapsed < 3000 );
+
+	elapsed = Sys_Milliseconds() - startTime;
+	if ( elapsed < 1 ) elapsed = 1;
+
+	speed1 = (float)data1.bytesReceived / ( (float)elapsed / 1000.0f );
+	speed2 = (float)data2.bytesReceived / ( (float)elapsed / 1000.0f );
+
+	// log results
+	if ( speed1 >= 1024.0f * 1024.0f )
+		Com_Printf( "  dl_source:  %.1f MB/s\n", speed1 / ( 1024.0f * 1024.0f ) );
+	else
+		Com_Printf( "  dl_source:  %.0f KB/s\n", speed1 / 1024.0f );
+
+	if ( speed2 >= 1024.0f * 1024.0f )
+		Com_Printf( "  dl_source2: %.1f MB/s\n", speed2 / ( 1024.0f * 1024.0f ) );
+	else
+		Com_Printf( "  dl_source2: %.0f KB/s\n", speed2 / 1024.0f );
+
+	// cleanup
+	dl->func.multi_remove_handle( multi, easy1 );
+	dl->func.multi_remove_handle( multi, easy2 );
+	dl->func.easy_cleanup( easy1 );
+	dl->func.easy_cleanup( easy2 );
+	dl->func.multi_cleanup( multi );
+	Com_DL_Done( dl );
+
+	if ( speed2 > speed1 && data2.bytesReceived > 0 ) {
+		Com_Printf( S_COLOR_GREEN "Speed test: dl_source2 is faster, using as primary.\n" );
+		return 2;
+	}
+
+	if ( data1.bytesReceived > 0 ) {
+		Com_Printf( S_COLOR_GREEN "Speed test: dl_source is faster, using as primary.\n" );
+		return 1;
+	}
+
+	if ( data2.bytesReceived > 0 ) {
+		Com_Printf( S_COLOR_YELLOW "Speed test: dl_source failed, using dl_source2.\n" );
+		return 2;
+	}
+
+	Com_Printf( S_COLOR_RED "Speed test: both sources failed.\n" );
+	return 0;
+}
+
+
+/*
+===============================================================
 Com_DL_Begin()
 
 Start downloading file from remoteURL and save it under fs_game/localName
@@ -1124,12 +1266,32 @@ qboolean Com_DL_Perform( download_t *dl )
 	else
 	{
 		qboolean autoDownload = dl->mapAutoDownload;
+		char fallbackURL[MAX_OSPATH];
+		char originalName[MAX_OSPATH];
+
 		dl->func.easy_getinfo( msg->easy_handle, CURLINFO_RESPONSE_CODE, &code );
 		Com_Printf( S_COLOR_RED "Download Error: %s Code: %ld\n",
 			dl->func.easy_strerror( msg->data.result ), code );
+
+		// save fallback info before cleanup
+		Q_strncpyz( fallbackURL, dl->fallbackURL, sizeof( fallbackURL ) );
+		Q_strncpyz( originalName, dl->originalName, sizeof( originalName ) );
+
 		strcpy( name, dl->TempName );
 		Com_DL_Cleanup( dl );
 		FS_Remove( name );
+
+		// try fallback source if available
+		if ( fallbackURL[0] != '\0' && originalName[0] != '\0' )
+		{
+			Com_Printf( S_COLOR_YELLOW "Trying fallback source...\n" );
+			if ( Com_DL_Begin( dl, originalName, fallbackURL, autoDownload ) )
+			{
+				dl->fallbackURL[0] = '\0'; // don't fallback again
+				return qtrue;
+			}
+		}
+
 		if ( autoDownload )
 		{
 			if ( cls.state == CA_CONNECTED )

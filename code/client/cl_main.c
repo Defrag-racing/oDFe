@@ -68,6 +68,7 @@ cvar_t	*cl_lanForcePackets;
 cvar_t	*cl_guidServerUniq;
 
 cvar_t	*dl_source;
+cvar_t	*dl_source2;
 cvar_t	*dl_usebaseq3;
 
 cvar_t	*cl_reconnectArgs;
@@ -4126,7 +4127,67 @@ void CL_Init( void ) {
 	Cvar_SetDescription( cl_guidServerUniq, "Makes cl_guid unique for each server." );
 
 	dl_source = Cvar_Get( "dl_source", "http://ws.q3df.org/maps/download/%m", CVAR_ARCHIVE );
-	Cvar_SetDescription( dl_source, "Cvar must point to download location." );
+	Cvar_SetDescription( dl_source, "Primary download source URL. Use %m for map/pak name placeholder." );
+
+	dl_source2 = Cvar_Get( "dl_source2", "https://defrag.racing/maps/download/%m", CVAR_ARCHIVE );
+	Cvar_SetDescription( dl_source2, "Secondary download source URL. If set, a 3-second speed test picks the faster source automatically. Use %m for map/pak name placeholder." );
+
+	// auto-fill empty sources: ensure both known mirrors are available
+	{
+		#define DL_DEFRAG_RACING "https://defrag.racing/maps/download/%m"
+		#define DL_WS_Q3DF      "http://ws.q3df.org/maps/download/%m"
+
+		qboolean src1_empty = ( dl_source->string[0] == '\0' );
+		qboolean src2_empty = ( dl_source2->string[0] == '\0' );
+		qboolean src1_is_defrag = ( strstr( dl_source->string, "defrag.racing" ) != NULL );
+		qboolean src1_is_ws     = ( strstr( dl_source->string, "ws.q3df.org" ) != NULL );
+		qboolean src2_is_defrag = ( strstr( dl_source2->string, "defrag.racing" ) != NULL );
+		qboolean src2_is_ws     = ( strstr( dl_source2->string, "ws.q3df.org" ) != NULL );
+
+		if ( src1_empty && src2_empty ) {
+			// both empty: set defaults
+			Cvar_Set( "dl_source", DL_WS_Q3DF );
+			Cvar_Set( "dl_source2", DL_DEFRAG_RACING );
+		} else if ( src1_empty ) {
+			// dl_source empty: fill with whichever mirror dl_source2 is NOT
+			Cvar_Set( "dl_source", src2_is_defrag ? DL_WS_Q3DF : DL_DEFRAG_RACING );
+		} else if ( src2_empty ) {
+			// dl_source2 empty: fill with whichever mirror dl_source is NOT
+			Cvar_Set( "dl_source2", src1_is_defrag ? DL_WS_Q3DF : DL_DEFRAG_RACING );
+		}
+
+		// fix duplicate sources: if both point to the same server, set the other one
+		if ( !src1_empty && !src2_empty ) {
+			// re-read after potential changes above
+			src1_is_defrag = ( strstr( dl_source->string, "defrag.racing" ) != NULL );
+			src1_is_ws     = ( strstr( dl_source->string, "ws.q3df.org" ) != NULL );
+			src2_is_defrag = ( strstr( dl_source2->string, "defrag.racing" ) != NULL );
+			src2_is_ws     = ( strstr( dl_source2->string, "ws.q3df.org" ) != NULL );
+
+			if ( src1_is_defrag && src2_is_defrag ) {
+				Cvar_Set( "dl_source2", DL_WS_Q3DF );
+			} else if ( src1_is_ws && src2_is_ws ) {
+				Cvar_Set( "dl_source2", DL_DEFRAG_RACING );
+			}
+		}
+
+		// fix common misconfiguration: ws.q3df.org only works over HTTP, not HTTPS
+		if ( strstr( dl_source->string, "https://ws.q3df.org" ) != NULL ) {
+			char fixed[MAX_CVAR_VALUE_STRING];
+			Q_strncpyz( fixed, dl_source->string, sizeof( fixed ) );
+			Q_replace( "https://ws.q3df.org", "http://ws.q3df.org", fixed, sizeof( fixed ) );
+			Cvar_Set( "dl_source", fixed );
+		}
+		if ( strstr( dl_source2->string, "https://ws.q3df.org" ) != NULL ) {
+			char fixed[MAX_CVAR_VALUE_STRING];
+			Q_strncpyz( fixed, dl_source2->string, sizeof( fixed ) );
+			Q_replace( "https://ws.q3df.org", "http://ws.q3df.org", fixed, sizeof( fixed ) );
+			Cvar_Set( "dl_source2", fixed );
+		}
+
+		#undef DL_DEFRAG_RACING
+		#undef DL_WS_Q3DF
+	}
 
 	dl_usebaseq3 = Cvar_Get( "dl_usebaseq3", "0", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( dl_usebaseq3, "0", "1", CV_INTEGER );
@@ -5190,11 +5251,27 @@ static void CL_ShowIP_f( void ) {
 
 #ifdef USE_CURL
 
+static int dl_preferredSource = 0; // 0=not tested, 1=dl_source, 2=dl_source2
+
+static const char *CL_DL_BuildURL( char *buf, int bufSize, const char *sourceURL, const char *pakname )
+{
+	// simple %m replacement without needing full CURL context
+	Q_strncpyz( buf, sourceURL, bufSize );
+	if ( !Q_replace( "%m", pakname, buf, bufSize ) ) {
+		if ( buf[strlen(buf)-1] != '/' )
+			Q_strcat( buf, bufSize, "/" );
+		Q_strcat( buf, bufSize, pakname );
+	}
+	return buf;
+}
+
 qboolean CL_Download( const char *cmd, const char *pakname, qboolean autoDownload )
 {
 	char url[MAX_OSPATH];
 	char name[MAX_CVAR_VALUE_STRING];
 	const char *s;
+	const char *primarySource;
+	const char *fallbackSource;
 
 	if ( dl_source->string[0] == '\0' )
 	{
@@ -5231,7 +5308,45 @@ qboolean CL_Download( const char *cmd, const char *pakname, qboolean autoDownloa
 		}
 	}
 
-	return Com_DL_Begin( &download, pakname, dl_source->string, autoDownload );
+	// speed test on first download if both sources are set
+	if ( dl_preferredSource == 0 && dl_source2->string[0] != '\0' )
+	{
+		char url1[MAX_OSPATH], url2[MAX_OSPATH];
+		CL_DL_BuildURL( url1, sizeof( url1 ), dl_source->string, pakname );
+		CL_DL_BuildURL( url2, sizeof( url2 ), dl_source2->string, pakname );
+		dl_preferredSource = Com_DL_SpeedTest( &download, url1, url2 );
+		if ( dl_preferredSource == 0 )
+			dl_preferredSource = 1; // both failed, default to dl_source
+	}
+
+	// select primary and fallback sources
+	if ( dl_preferredSource == 2 ) {
+		primarySource = dl_source2->string;
+		fallbackSource = dl_source->string;
+	} else {
+		primarySource = dl_source->string;
+		fallbackSource = ( dl_source2->string[0] != '\0' ) ? dl_source2->string : NULL;
+	}
+
+	if ( Com_DL_Begin( &download, pakname, primarySource, autoDownload ) ) {
+		// set fallback info for mid-download failure recovery
+		if ( fallbackSource ) {
+			Q_strncpyz( download.fallbackURL, fallbackSource, sizeof( download.fallbackURL ) );
+			Q_strncpyz( download.originalName, pakname, sizeof( download.originalName ) );
+		} else {
+			download.fallbackURL[0] = '\0';
+			download.originalName[0] = '\0';
+		}
+		return qtrue;
+	}
+
+	// primary failed to start, try fallback
+	if ( fallbackSource ) {
+		Com_Printf( S_COLOR_YELLOW "Primary source failed, trying fallback...\n" );
+		return Com_DL_Begin( &download, pakname, fallbackSource, autoDownload );
+	}
+
+	return qfalse;
 }
 
 
