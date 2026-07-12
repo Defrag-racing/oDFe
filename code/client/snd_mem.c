@@ -89,7 +89,8 @@ void SND_setup( void )
 	Cvar_SetDescription( cv, "Amount of memory (RAM) assigned to the sound buffer (in MB)." );
 
 	scs = ( cv->integer * /*1536*/ 12 * dma.speed ) / 22050;
-	scs *= 128;
+	scs *= 128; // to get 1536 * (float)(dma.speed / 22050) without using FP
+	scs += 768; // extra 1.5M to fix persistent swapping on ut4_skipjumps_b2
 
 	sz = scs * sizeof( sndBuffer );
 

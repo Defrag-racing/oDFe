@@ -64,6 +64,7 @@ extern glconfig_t	glConfig;		// outside of TR since it shouldn't be cleared duri
 // game and your mod uses tr_types.h from this build you can safely move them
 // to the glconfig_t struct.
 extern qboolean  nonPowerOfTwoTextures;
+extern qboolean  textureBorderClampAvailable;
 extern qboolean  textureFilterAnisotropic;
 extern int       maxAnisotropy;
 extern int       gl_version;
@@ -133,5 +134,7 @@ IMPLEMENTATION SPECIFIC FUNCTIONS
 
 ====================================================================
 */
+
+int R_GetDlightMode( void );
 
 #endif

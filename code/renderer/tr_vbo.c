@@ -802,7 +802,9 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 	msurface_t **surfList;
 	srfSurfaceFace_t *face;
 	srfTriangles_t *tris;
+#ifdef USE_VBO_GRID
 	srfGridMesh_t *grid;
+#endif
 	msurface_t *sf;
 	int ibo_size;
 	int vbo_size;
@@ -816,6 +818,11 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 	if ( !qglBindBufferARB || !r_vbo->integer )
 		return;
 
+	if (!qglGenProgramsARB) {
+		ri.Printf( PRINT_WARNING, "... ARB shaders required for VBO\n" );
+		return;
+	}
+	
 	if ( glConfig.numTextureUnits < 3 ) {
 		ri.Printf( PRINT_WARNING, "... not enough texture units for VBO\n" );
 		return;
@@ -849,6 +856,7 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 			sf->shader->numIndexes += tris->numIndexes;
 			continue;
 		}
+#ifdef USE_VBO_GRID
 		grid = (srfGridMesh_t *) sf->data;
 		if ( grid->surfaceType == SF_GRID && isStaticShader( sf->shader ) ) {
 			grid->vboItemIndex = ++numStaticSurfaces;
@@ -861,6 +869,7 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 			sf->shader->numIndexes += grid->vboExpectIndices;
 			continue;
 		}
+#endif // USE_VBO_GRID
 	}
 
 	if ( numStaticSurfaces == 0 ) {
@@ -918,11 +927,13 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 			surfList[ n++ ] = sf;
 			continue;
 		}
+#ifdef USE_VBO_GRID
 		grid = (srfGridMesh_t *) sf->data;
 		if ( grid->surfaceType == SF_GRID && grid->vboItemIndex ) {
 			surfList[ n++ ] = sf;
 			continue;
 		}
+#endif
 	}
 
 	if ( n != numStaticSurfaces ) {
@@ -943,13 +954,17 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 		sf = surfList[ i ];
 		face = (srfSurfaceFace_t *) sf->data;
 		tris = (srfTriangles_t *) sf->data;
+#ifdef USE_VBO_GRID
 		grid = (srfGridMesh_t *) sf->data;
+#endif
 		if ( face->surfaceType == SF_FACE )
 			face->vboItemIndex = i + 1;
 		else if ( tris->surfaceType == SF_TRIANGLES ) {
 			tris->vboItemIndex = i + 1;
+#ifdef USE_VBO_GRID
 		} else if ( grid->surfaceType == SF_GRID ){
 			grid->vboItemIndex = i + 1;
+#endif // USE_VBO_GRID
 		} else {
 			ri.Error( ERR_DROP, "Unexpected surface type" );
 		}
@@ -966,12 +981,14 @@ void R_BuildWorldVBO( msurface_t *surf, int surfCount )
 		rb_surfaceTable[ *sf->data ]( sf->data ); // VBO_PushData() may be called multiple times there
 		// setup colors and texture coordinates
 		VBO_PushData( i + 1, &tess );
+#ifdef USE_VBO_GRID
 		if ( grid->surfaceType == SF_GRID ) {
 			vbo_item_t *vi = vbo->items + i + 1;
 			if ( vi->num_vertexes != grid->vboExpectVertices || vi->num_indexes != grid->vboExpectIndices ) {
 				ri.Error( ERR_DROP, "Unexpected grid vertexes/indexes count" );
 			} 
 		}
+#endif // USE_VBO_GRID
 		tess.numIndexes = 0;
 		tess.numVertexes = 0;
 	}
@@ -1033,11 +1050,13 @@ __fail:
 			tris->vboItemIndex = 0;
 			continue;
 		}
+#ifdef USE_VBO_GRID
 		grid = (srfGridMesh_t *) sf->data;
 		if ( grid->surfaceType == SF_GRID ) {
 			grid->vboItemIndex = 0;
 			continue;
 		}
+#endif // USE_VBO_GRID
 	}
 
 	VBO_UnBind();

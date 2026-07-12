@@ -1,0 +1,2690 @@
+/*
+===========================================================================
+Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 2020-2026 Quake3e project
+
+This file is part of Quake III Arena source code.
+
+Quake III Arena source code is free software; you can redistribute it
+and/or modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation; either version 2 of the License,
+or (at your option) any later version.
+
+Quake III Arena source code is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with Quake III Arena source code; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+===========================================================================
+*/
+
+// load time compiler and execution environment for PPC64
+// supports both ELFv2 ABI (ppc64le) and ELFv1 ABI (ppc64 big-endian)
+// without dynamic register allocation
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <math.h>
+
+#include "vm_local.h"
+
+#define DROP( reason, args... ) \
+	do { \
+		VM_FreeBuffers(); \
+		Com_Error( ERR_DROP, "%s: " reason, __func__, ##args ); \
+	} while(0)
+
+
+// Detect ELFv1 (ppc64 big-endian) vs ELFv2 (ppc64le) ABI
+#if defined(_CALL_ELF) && _CALL_ELF == 2
+#define PPC64_ELFv2 1
+#elif defined(_CALL_ELF) && _CALL_ELF == 1
+#define PPC64_ELFv1 1
+#elif defined(__LITTLE_ENDIAN__) || defined(__LITTLE_ENDIAN)
+#define PPC64_ELFv2 1
+#else
+#define PPC64_ELFv1 1
+#endif
+
+// Detect ISA level at compile time for optional instruction optimizations.
+// ISA 2.07 (POWER8): direct-move instructions (mtvsrwa, mfvsrwz, xscvdpsxws)
+// These eliminate memory round-trips in CVIF/CVFI conversions.
+#if defined(_ARCH_PWR8) || defined(__POWER8_VECTOR__)
+#define USE_ISA_2_07 1
+#else
+#define USE_ISA_2_07 0
+#endif
+
+// ISA 3.0 (POWER9): modsw, moduw instructions
+// These replace the 3-instruction divw+mullw+sub sequence for modulo.
+#if defined(_ARCH_PWR9) || defined(__POWER9_VECTOR__)
+#define USE_ISA_3_0 1
+#else
+#define USE_ISA_3_0 0
+#endif
+
+#define NUM_PASSES		3 // INIT, EXPAND, FINAL + alloc + FINAL
+
+#define PASS_INIT		0
+#define PASS_EXPAND		1
+#define PASS_FINAL		2
+
+// additional integrity checks
+#define DEBUG_VM
+
+#define DYN_ALLOC_RX
+#define DYN_ALLOC_SX
+
+#define CONST_CACHE_RX
+#define CONST_CACHE_SX
+
+#define REGS_OPTIMIZE
+#define ADDR_OPTIMIZE
+#define LOAD_OPTIMIZE
+#define FPU_OPTIMIZE
+#define CONST_OPTIMIZE
+
+// allow sharing both variables and constants in registers
+#define REG_TYPE_MASK
+// number of variables/memory mappings per register
+#define REG_MAP_COUNT 4
+
+#define FUNC_ALIGN 16
+
+//#define DUMP_CODE
+
+// =========================================================================
+// PPC64 ELFv2 ABI Register Usage
+// =========================================================================
+// r0       scratch (cannot be base register in D-form loads/stores)
+// r1       stack pointer (must be 16-byte aligned)
+// r2       TOC pointer (reserved, do not touch)
+// r3-r10   argument/return/scratch registers
+// r11-r12  scratch (r12 = target addr for indirect calls in ELFv2)
+// r13      small data area pointer (reserved, do not touch)
+// r14-r31  callee-saved (non-volatile)
+// f0       scratch
+// f1-f13   argument/return/scratch
+// f14-f31  callee-saved
+// LR       link register (saved/restored via mflr/mtlr)
+// CR       condition register (CR0-CR1 volatile, CR2-CR4 non-volatile)
+// CTR      count register (volatile)
+
+// GPR definitions
+#define R0	0
+#define R1	1	// SP
+#define R2	2	// TOC - reserved
+#define R3	3	// arg/return, scratch
+#define R4	4	// arg, scratch
+#define R5	5	// arg, scratch
+#define R6	6	// arg, scratch
+#define R7	7	// arg, scratch
+#define R8	8	// arg, scratch
+#define R9	9	// arg, scratch
+#define R10	10	// arg, scratch
+#define R11	11	// scratch
+#define R12	12	// scratch (must hold target addr before bctrl in ELFv2)
+#define R13	13	// small data area - reserved
+#define R14	14	// callee-saved
+#define R15	15	// callee-saved
+#define R16	16	// callee-saved
+#define R17	17	// callee-saved
+#define R18	18	// callee-saved
+#define R19	19	// callee-saved
+#define R20	20	// callee-saved
+#define R21	21	// callee-saved
+#define R22	22	// callee-saved
+#define R23	23	// callee-saved
+#define R24	24	// callee-saved
+#define R25	25	// callee-saved
+#define R26	26	// callee-saved
+#define R27	27	// callee-saved
+#define R28	28	// callee-saved
+#define R29	29	// callee-saved
+#define R30	30	// callee-saved
+#define R31	31	// callee-saved
+
+// FPR definitions
+#define F0	0	// scratch
+#define F1	1	// scratch
+#define F2	2	// scratch
+#define F3	3	// scratch
+#define F4	4	// scratch
+#define F5	5	// scratch
+#define F6	6	// scratch
+#define F7	7	// scratch
+
+#define SP	R1
+
+// VM state registers (callee-saved)
+#define rVMBASE			R14		// pointer to vm_t struct
+#define rOPSTACK		R15		// opStack pointer (int32_t*)
+#define rOPSTACKTOP		R16		// opStackTop pointer
+#define rINSPOINTERS	R17		// instructionPointers (intptr_t*)
+#define rPSTACK			R18		// programStack (int32_t value)
+#define rPSTACKBOTTOM	R19		// stackBottom
+#define rDATABASE		R20		// dataBase pointer
+#define rDATAMASK		R21		// dataMask
+#define rPROCBASE		R22		// procBase = dataBase + programStack (for current function)
+
+typedef enum
+{
+	FUNC_ENTR,
+	FUNC_BCPY,
+	FUNC_CALL,
+	FUNC_SYSC,
+	FUNC_SYSF,
+	FUNC_PSOF, // error function definitions must be sequential from there
+	FUNC_OSOF,
+	FUNC_BADJ,
+	FUNC_OUTJ,
+#ifndef NDEBUG
+	FUNC_HIBITSET,
+#endif
+	FUNC_ERR_BEGIN = FUNC_PSOF,
+#ifndef NDEBUG
+	FUNC_ERR_END = FUNC_HIBITSET,
+#else
+	FUNC_ERR_END = FUNC_OUTJ,
+#endif
+	OFFSET_T_LAST
+} offset_t;
+
+
+static uint32_t *code;
+static uint32_t compiledOfs;
+
+static instruction_t *inst = NULL;
+
+static uint32_t ip;
+static uint32_t pass;
+static uint32_t jumpSizeChanged;
+
+static uint32_t funcOffset[ OFFSET_T_LAST ];
+
+static uint32_t branchOffset[ OFFSET_T_LAST ];
+static uint32_t savedBranchOffset[ OFFSET_T_LAST ];
+
+
+static void VM_FreeBuffers( void )
+{
+	if ( inst ) {
+		Z_Free( inst );
+		inst = NULL;
+	}
+}
+
+
+// =========================================================================
+// PPC64 Instruction Encoding Macros
+// =========================================================================
+//
+// PPC instructions are all 32-bit, big-endian bit numbering (bit 0 = MSB).
+// The encoding macros construct native instruction words.
+//
+// Instruction forms:
+//   D-form:  [opcode(6)][RT(5)][RA(5)][D(16)]
+//   DS-form: [opcode(6)][RT(5)][RA(5)][DS(14)][XO(2)]
+//   X-form:  [opcode(6)][RT(5)][RA(5)][RB(5)][XO(10)][Rc(1)]
+//   XO-form: [opcode(6)][RT(5)][RA(5)][RB(5)][OE(1)][XO(9)][Rc(1)]
+//   XFX-form:[opcode(6)][RT(5)][spr(10)][XO(10)][0]
+//   I-form:  [opcode(6)][LI(24)][AA(1)][LK(1)]
+//   B-form:  [opcode(6)][BO(5)][BI(5)][BD(14)][AA(1)][LK(1)]
+//   XL-form: [opcode(6)][BO(5)][BI(5)][0(5)][XO(10)][LK(1)]
+//   M-form:  [opcode(6)][RS(5)][RA(5)][SH(5)][MB(5)][ME(5)][Rc(1)]
+//   MD-form: [opcode(6)][RS(5)][RA(5)][sh(5)][mb(6)][XO(3)][sh2(1)][Rc(1)]
+//   A-form:  [opcode(6)][FRT(5)][FRA(5)][FRB(5)][FRC(5)][XO(5)][Rc(1)]
+
+// ---- D-form ----
+// addi, addis, lwz, stw, lbz, sth, lhz, etc.
+#define PPC_D(op, rt, ra, d) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rt)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | ((unsigned)(d)&0xFFFF) )
+
+// Debug-only range checks for D-form immediate fields.  The encoding
+// silently truncates to 16 bits; these helpers turn out-of-range
+// immediates into a loud Com_Error rather than a wrong instruction
+// at JIT-compile time.  Useful as defence against the
+// signed/unsigned-16-bit immediate confusion class of bug.
+#ifndef NDEBUG
+// Signed 16-bit immediate: accept either the signed view
+// (INT16_MIN..INT16_MAX) or the unsigned bit-pattern (0..UINT16_MAX),
+// since callers sometimes pre-extract a uint16 half (e.g. emit_MOVi64).
+// The CPU's sign-extension means both views encode the same 16 bits.
+static inline uint32_t _ppc_chk_si16( int32_t v, const char *opname )
+{
+	if ( v < INT16_MIN || v > UINT16_MAX ) {
+		Com_Error( ERR_DROP,
+			"JIT: %s signed-16 immediate out of range: 0x%x",
+			opname, (uint32_t)v );
+	}
+	return (uint32_t)v;
+}
+// Unsigned 16-bit immediate (ANDI/ORI/XORI/CMPLWI etc.): the
+// instruction zero-extends to 32 bits, so anything with the upper
+// 16 bits non-zero is a sign-vs-unsigned bug in waiting.
+static inline uint32_t _ppc_chk_ui16( int32_t v, const char *opname )
+{
+	if ( ( (uint32_t)v & 0xFFFF0000u ) != 0 ) {
+		Com_Error( ERR_DROP,
+			"JIT: %s unsigned-16 immediate out of range: 0x%x",
+			opname, (uint32_t)v );
+	}
+	return (uint32_t)v;
+}
+#define PPC_IMM_S16(v, op)  _ppc_chk_si16((v), (op))
+#define PPC_IMM_U16(v, op)  _ppc_chk_ui16((v), (op))
+#else
+#define PPC_IMM_S16(v, op)  ((uint32_t)(v))
+#define PPC_IMM_U16(v, op)  ((uint32_t)(v))
+#endif
+
+// ---- DS-form ----
+// ld, std, lwa
+// The DS field is 14 bits; actual byte displacement = DS << 2
+// So we pass the byte offset and shift right by 2 for encoding.
+// The byte offset MUST be a multiple of 4.
+#define PPC_DS(op, rt, ra, ds, xo) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rt)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | ((unsigned)(ds)&0xFFFC) | \
+	  ((unsigned)(xo)&0x3) )
+
+// ---- X-form ----
+// and, or, xor, cmp, etc.
+#define PPC_X(op, rs, ra, rb, xo, rc) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rs)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | (((unsigned)(rb)&0x1F)<<11) | \
+	  (((unsigned)(xo)&0x3FF)<<1) | ((unsigned)(rc)&1) )
+
+// ---- XO-form ----
+// add, subf, mullw, divw, etc.
+#define PPC_XO(op, rt, ra, rb, oe, xo, rc) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rt)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | (((unsigned)(rb)&0x1F)<<11) | \
+	  (((unsigned)(oe)&1)<<10) | (((unsigned)(xo)&0x1FF)<<1) | \
+	  ((unsigned)(rc)&1) )
+
+// ---- XFX-form ----
+// mtspr, mfspr
+#define PPC_XFX(op, rt, spr, xo) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rt)&0x1F)<<21) | \
+	  (((unsigned)(spr)&0x3FF)<<11) | (((unsigned)(xo)&0x3FF)<<1) )
+
+// ---- I-form ----
+// b, bl
+#define PPC_I(op, li, aa, lk) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(li)&0xFFFFFF)<<2) | \
+	  (((unsigned)(aa)&1)<<1) | ((unsigned)(lk)&1) )
+
+// ---- B-form ----
+// bc, bcl (B-form encoding — use PPC_BC convenience macro instead)
+#define PPC_B_RAW(op, bo, bi, bd, aa, lk) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(bo)&0x1F)<<21) | \
+	  (((unsigned)(bi)&0x1F)<<16) | (((unsigned)(bd)&0x3FFF)<<2) | \
+	  (((unsigned)(aa)&1)<<1) | ((unsigned)(lk)&1) )
+
+// ---- XL-form ----
+// bclr, bcctr
+#define PPC_XL(op, bo, bi, xo, lk) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(bo)&0x1F)<<21) | \
+	  (((unsigned)(bi)&0x1F)<<16) | (((unsigned)(xo)&0x3FF)<<1) | \
+	  ((unsigned)(lk)&1) )
+
+// ---- M-form ----
+// rlwinm, rlwimi
+#define PPC_M(op, rs, ra, sh, mb, me, rc) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rs)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | (((unsigned)(sh)&0x1F)<<11) | \
+	  (((unsigned)(mb)&0x1F)<<6) | (((unsigned)(me)&0x1F)<<1) | \
+	  ((unsigned)(rc)&1) )
+
+// ---- MD-form ----
+// rldicl, rldicr, rldic, rldimi
+// Layout (PPC big-endian bit numbering, but we use LSB=bit0):
+//   bits 31-26: opcode (6)
+//   bits 25-21: RS (5)
+//   bits 20-16: RA (5)
+//   bits 15-11: sh[0:4] (5)
+//   bits 10-6:  mb[0:4] (5)
+//   bit  5:     mb[5] (1)
+//   bits 4-2:   XO (3)
+//   bit  1:     sh[5] (1)
+//   bit  0:     Rc (1)
+#define PPC_MD(op, rs, ra, sh, mb, xo3, rc) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(rs)&0x1F)<<21) | \
+	  (((unsigned)(ra)&0x1F)<<16) | (((unsigned)(sh)&0x1F)<<11) | \
+	  (((unsigned)(mb)&0x1F)<<6) | ((((unsigned)(mb)>>5)&1)<<5) | \
+	  (((unsigned)(xo3)&0x7)<<2) | ((((unsigned)(sh)>>5)&1)<<1) | \
+	  ((unsigned)(rc)&1) )
+
+// sldi ra, rs, n  =>  rldicr ra, rs, n, 63-n  (XO=1 for rldicr)
+#define PPC_SLDI(ra, rs, n)		PPC_MD(30, rs, ra, n, 63-(n), 1, 0)
+// srdi ra, rs, n  =>  rldicl ra, rs, 64-n, n  (XO=0 for rldicl)
+#define PPC_SRDI(ra, rs, n)		PPC_MD(30, rs, ra, 64-(n), n, 0, 0)
+// clrldi ra, rs, n => rldicl ra, rs, 0, n
+#define PPC_CLRLDI(ra, rs, n)	PPC_MD(30, rs, ra, 0, n, 0, 0)
+
+
+// =========================================================================
+// PPC64 Instruction Mnemonics
+// =========================================================================
+
+// -- Arithmetic (D-form) --
+// addi rt, ra, si  (li rt, si when ra=0)
+#define PPC_ADDI(rt, ra, si)	PPC_D(14, rt, ra, PPC_IMM_S16(si, "ADDI"))
+// addis rt, ra, si  (lis rt, si when ra=0)
+#define PPC_ADDIS(rt, ra, si)	PPC_D(15, rt, ra, PPC_IMM_S16(si, "ADDIS"))
+// li rt, si  (pseudo for addi rt, 0, si)
+#define PPC_LI(rt, si)			PPC_ADDI(rt, R0, si)
+// lis rt, si  (pseudo for addis rt, 0, si)
+#define PPC_LIS(rt, si)			PPC_ADDIS(rt, R0, si)
+// subfic rt, ra, si
+#define PPC_SUBFIC(rt, ra, si)	PPC_D(8, rt, ra, PPC_IMM_S16(si, "SUBFIC"))
+// mulli rt, ra, si
+#define PPC_MULLI(rt, ra, si)	PPC_D(7, rt, ra, PPC_IMM_S16(si, "MULLI"))
+
+// -- Arithmetic (XO-form) --
+// add rt, ra, rb
+#define PPC_ADD(rt, ra, rb)		PPC_XO(31, rt, ra, rb, 0, 266, 0)
+// subf rt, ra, rb  (rt = rb - ra)
+#define PPC_SUBF(rt, ra, rb)	PPC_XO(31, rt, ra, rb, 0, 40, 0)
+// sub rt, ra, rb  (pseudo: subf rt, rb, ra => rt = ra - rb)
+// NOTE: PPC subf is rt = rb - ra, so sub(rt,a,b) = subf(rt,b,a)
+#define PPC_SUB(rt, ra, rb)		PPC_SUBF(rt, rb, ra)
+// neg rt, ra
+#define PPC_NEG(rt, ra)			PPC_XO(31, rt, ra, 0, 0, 104, 0)
+// mullw rt, ra, rb
+#define PPC_MULLW(rt, ra, rb)	PPC_XO(31, rt, ra, rb, 0, 235, 0)
+// mulhw rt, ra, rb (signed high word)
+#define PPC_MULHW(rt, ra, rb)	PPC_X(31, rt, ra, rb, 75, 0)
+// mulhwu rt, ra, rb (unsigned high word)
+#define PPC_MULHWU(rt, ra, rb)	PPC_X(31, rt, ra, rb, 11, 0)
+// divw rt, ra, rb (signed)
+#define PPC_DIVW(rt, ra, rb)	PPC_XO(31, rt, ra, rb, 0, 491, 0)
+// divwu rt, ra, rb (unsigned)
+#define PPC_DIVWU(rt, ra, rb)	PPC_XO(31, rt, ra, rb, 0, 459, 0)
+
+// -- Logical (X-form, note: PPC X-form logicals use RS,RA,RB encoding) --
+// and ra, rs, rb
+#define PPC_AND(ra, rs, rb)		PPC_X(31, rs, ra, rb, 28, 0)
+// or ra, rs, rb
+#define PPC_OR(ra, rs, rb)		PPC_X(31, rs, ra, rb, 444, 0)
+// xor ra, rs, rb
+#define PPC_XOR(ra, rs, rb)		PPC_X(31, rs, ra, rb, 316, 0)
+// nor ra, rs, rb
+#define PPC_NOR(ra, rs, rb)		PPC_X(31, rs, ra, rb, 124, 0)
+// not ra, rs  (pseudo for nor ra, rs, rs)
+#define PPC_NOT(ra, rs)			PPC_NOR(ra, rs, rs)
+// mr ra, rs  (pseudo for or ra, rs, rs)
+#define PPC_MR(ra, rs)			PPC_OR(ra, rs, rs)
+
+// andi. ra, rs, ui  (always sets CR0)
+#define PPC_ANDI(ra, rs, ui)	PPC_D(28, rs, ra, PPC_IMM_U16(ui, "ANDI"))
+// ori ra, rs, ui
+#define PPC_ORI(ra, rs, ui)		PPC_D(24, rs, ra, PPC_IMM_U16(ui, "ORI"))
+// oris ra, rs, ui
+#define PPC_ORIS(ra, rs, ui)	PPC_D(25, rs, ra, PPC_IMM_U16(ui, "ORIS"))
+// xori ra, rs, ui
+#define PPC_XORI(ra, rs, ui)	PPC_D(26, rs, ra, PPC_IMM_U16(ui, "XORI"))
+// xoris ra, rs, ui
+#define PPC_XORIS(ra, rs, ui)	PPC_D(27, rs, ra, PPC_IMM_U16(ui, "XORIS"))
+// nop (ori 0, 0, 0)
+#define PPC_NOP()				PPC_ORI(R0, R0, 0)
+
+// -- Shift (X-form, with RS,RA encoding) --
+// slw ra, rs, rb
+#define PPC_SLW(ra, rs, rb)		PPC_X(31, rs, ra, rb, 24, 0)
+// srw ra, rs, rb
+#define PPC_SRW(ra, rs, rb)		PPC_X(31, rs, ra, rb, 536, 0)
+// sraw ra, rs, rb
+#define PPC_SRAW(ra, rs, rb)	PPC_X(31, rs, ra, rb, 792, 0)
+// srawi ra, rs, sh
+#define PPC_SRAWI(ra, rs, sh)	PPC_X(31, rs, ra, sh, 824, 0)
+
+// -- Shift 64-bit --
+// sld ra, rs, rb
+#define PPC_SLD(ra, rs, rb)		PPC_X(31, rs, ra, rb, 27, 0)
+// srd ra, rs, rb
+#define PPC_SRD(ra, rs, rb)		PPC_X(31, rs, ra, rb, 539, 0)
+
+// -- Rotate/Mask --
+// rlwinm ra, rs, sh, mb, me  (rotate left word immediate then AND with mask)
+#define PPC_RLWINM(ra, rs, sh, mb, me)	PPC_M(21, rs, ra, sh, mb, me, 0)
+// clrlwi ra, rs, n  (clear left n bits) = rlwinm ra, rs, 0, n, 31
+#define PPC_CLRLWI(ra, rs, n)			PPC_RLWINM(ra, rs, 0, n, 31)
+
+
+// -- Compare (D-form and X-form) --
+// cmpwi cr, ra, si  (signed word compare immediate)
+// L=0 for 32-bit compare, cr field in bits 21-23
+#define PPC_CMPWI(cr, ra, si)	PPC_D(11, ((cr)<<2), ra, PPC_IMM_S16(si, "CMPWI"))
+// cmplwi cr, ra, ui  (unsigned word compare immediate)
+#define PPC_CMPLWI(cr, ra, ui)	PPC_D(10, ((cr)<<2), ra, PPC_IMM_U16(ui, "CMPLWI"))
+// cmpw cr, ra, rb  (signed word compare)
+#define PPC_CMPW(cr, ra, rb)	PPC_X(31, ((cr)<<2), ra, rb, 0, 0)
+// cmplw cr, ra, rb  (unsigned word compare)
+#define PPC_CMPLW(cr, ra, rb)	PPC_X(31, ((cr)<<2), ra, rb, 32, 0)
+// cmpdi cr, ra, si  (signed doubleword compare immediate, L=1)
+#define PPC_CMPDI(cr, ra, si)	PPC_D(11, ((cr)<<2)|1, ra, si)
+// cmpd cr, ra, rb  (signed doubleword compare)
+#define PPC_CMPD(cr, ra, rb)	PPC_X(31, ((cr)<<2)|1, ra, rb, 0, 0)
+// cmpld cr, ra, rb  (unsigned doubleword compare)
+#define PPC_CMPLD(cr, ra, rb)	PPC_X(31, ((cr)<<2)|1, ra, rb, 32, 0)
+
+// -- Load (D-form) --
+// lwz rt, d(ra)
+#define PPC_LWZ(rt, d, ra)		PPC_D(32, rt, ra, d)
+// lbz rt, d(ra)
+#define PPC_LBZ(rt, d, ra)		PPC_D(34, rt, ra, d)
+// lhz rt, d(ra)
+#define PPC_LHZ(rt, d, ra)		PPC_D(40, rt, ra, d)
+// lha rt, d(ra)  (halfword algebraic / sign-extend)
+#define PPC_LHA(rt, d, ra)		PPC_D(42, rt, ra, d)
+
+// -- Load (DS-form, 64-bit) --
+// ld rt, ds(ra)
+#define PPC_LD(rt, ds, ra)		PPC_DS(58, rt, ra, ds, 0)
+// lwa rt, ds(ra) (word algebraic = sign-extend to 64-bit)
+#define PPC_LWA(rt, ds, ra)		PPC_DS(58, rt, ra, ds, 2)
+
+// -- Load indexed (X-form) --
+// lwzx rt, ra, rb
+#define PPC_LWZX(rt, ra, rb)	PPC_X(31, rt, ra, rb, 23, 0)
+// lbzx rt, ra, rb
+#define PPC_LBZX(rt, ra, rb)	PPC_X(31, rt, ra, rb, 87, 0)
+// lhzx rt, ra, rb
+#define PPC_LHZX(rt, ra, rb)	PPC_X(31, rt, ra, rb, 279, 0)
+// ldx rt, ra, rb
+#define PPC_LDX(rt, ra, rb)		PPC_X(31, rt, ra, rb, 21, 0)
+// lwax rt, ra, rb (load word algebraic indexed)
+#define PPC_LWAX(rt, ra, rb)	PPC_X(31, rt, ra, rb, 341, 0)
+
+// -- Store (D-form) --
+// stw rs, d(ra)
+#define PPC_STW(rs, d, ra)		PPC_D(36, rs, ra, d)
+// stb rs, d(ra)
+#define PPC_STB(rs, d, ra)		PPC_D(38, rs, ra, d)
+// sth rs, d(ra)
+#define PPC_STH(rs, d, ra)		PPC_D(44, rs, ra, d)
+
+// -- Store (DS-form, 64-bit) --
+// std rs, ds(ra)
+#define PPC_STD(rs, ds, ra)		PPC_DS(62, rs, ra, ds, 0)
+
+// -- Store indexed (X-form) --
+// stwx rs, ra, rb
+#define PPC_STWX(rs, ra, rb)	PPC_X(31, rs, ra, rb, 151, 0)
+// stbx rs, ra, rb
+#define PPC_STBX(rs, ra, rb)	PPC_X(31, rs, ra, rb, 215, 0)
+// sthx rs, ra, rb
+#define PPC_STHX(rs, ra, rb)	PPC_X(31, rs, ra, rb, 407, 0)
+// stdx rs, ra, rb
+#define PPC_STDX(rs, ra, rb)	PPC_X(31, rs, ra, rb, 149, 0)
+
+// -- Sign extension (X-form) --
+// extsb ra, rs (sign-extend byte)
+#define PPC_EXTSB(ra, rs)		PPC_X(31, rs, ra, 0, 954, 0)
+// extsh ra, rs (sign-extend halfword)
+#define PPC_EXTSH(ra, rs)		PPC_X(31, rs, ra, 0, 922, 0)
+// extsw ra, rs (sign-extend word to doubleword)
+#define PPC_EXTSW(ra, rs)		PPC_X(31, rs, ra, 0, 986, 0)
+
+// -- Branch (I-form) --
+// b target  (relative, target is byte offset)
+#define PPC_B(off)				( 0x48000000 | ((unsigned)(off) & 0x03FFFFFC) )
+// bl target  (relative branch and link)
+#define PPC_BL(off)				( 0x48000001 | ((unsigned)(off) & 0x03FFFFFC) )
+
+// -- Branch Conditional (B-form) --
+// Condition Register bit encoding for CR0:
+//   BI=0: LT, BI=1: GT, BI=2: EQ, BI=3: SO/UN
+// Branch hints: BO field
+//   BO=12 (0b01100): branch if CR[BI] is set (true)
+//   BO=4  (0b00100): branch if CR[BI] is clear (false)
+//   BO=20 (0b10100): always (unconditional via bc)
+#define BO_TRUE		12
+#define BO_FALSE	4
+#define BO_ALWAYS	20
+
+#define BI_LT	0	// CR0 LT
+#define BI_GT	1	// CR0 GT
+#define BI_EQ	2	// CR0 EQ
+#define BI_SO	3	// CR0 SO (summary overflow / unordered for FP)
+
+// bc bo, bi, target  (relative, target is byte offset, must be 4-byte aligned)
+#define PPC_BC(bo, bi, off) \
+	( 0x40000000 | (((unsigned)(bo)&0x1F)<<21) | (((unsigned)(bi)&0x1F)<<16) | \
+	  ((unsigned)(off) & 0xFFFC) )
+
+// Convenience: branch if CR0 condition
+// beq target
+#define PPC_BEQ(off)		PPC_BC(BO_TRUE, BI_EQ, off)
+// bne target
+#define PPC_BNE(off)		PPC_BC(BO_FALSE, BI_EQ, off)
+// blt target
+#define PPC_BLT(off)		PPC_BC(BO_TRUE, BI_LT, off)
+// bge target (not LT)
+#define PPC_BGE(off)		PPC_BC(BO_FALSE, BI_LT, off)
+// bgt target
+#define PPC_BGT(off)		PPC_BC(BO_TRUE, BI_GT, off)
+// ble target (not GT)
+#define PPC_BLE(off)		PPC_BC(BO_FALSE, BI_GT, off)
+// bso target (summary overflow / unordered)
+#define PPC_BSO(off)		PPC_BC(BO_TRUE, BI_SO, off)
+// bns target (not SO)
+#define PPC_BNS(off)		PPC_BC(BO_FALSE, BI_SO, off)
+
+// cror bt, ba, bb  (CR[bt] = CR[ba] | CR[bb])  XL-form, xo=449
+#define PPC_CROR(bt, ba, bb) \
+	( (19u<<26) | (((unsigned)(bt)&0x1F)<<21) | (((unsigned)(ba)&0x1F)<<16) | \
+	  (((unsigned)(bb)&0x1F)<<11) | (449u<<1) )
+
+// -- Branch to LR/CTR (XL-form) --
+// blr  (branch to LR)
+#define PPC_BLR()			PPC_XL(19, BO_ALWAYS, 0, 16, 0)
+// bctr (branch to CTR)
+#define PPC_BCTR()			PPC_XL(19, BO_ALWAYS, 0, 528, 0)
+// bctrl (branch to CTR and link)
+#define PPC_BCTRL()			PPC_XL(19, BO_ALWAYS, 0, 528, 1)
+// blrl (branch to LR and link)
+#define PPC_BLRL()			PPC_XL(19, BO_ALWAYS, 0, 16, 1)
+
+// -- Special Purpose Registers --
+// SPR encoding: PPC encodes SPR as two 5-bit halves swapped
+// LR = SPR 8 -> encoded as (8 & 0x1F) | ((8 >> 5) << 5) -> but XFX field is (spr5:9 || spr0:4)
+// Actually for mtspr/mfspr, the SPR field is split: bits 16-20 = spr[0:4], bits 11-15 = spr[5:9]
+// So SPR 8 (LR) = spr[0:4]=8, spr[5:9]=0 => encoded field = (0 << 5) | 8 = 8
+// But in the instruction, the halves are swapped: (spr[5:9] << 5) | spr[0:4]
+// For SPR 8:  (0 << 5) | 8 = 8
+// For SPR 9 (CTR):  (0 << 5) | 9 = 9
+// For SPR 256 (VRSAVE): spr[0:4]=0, spr[5:9]=8 => (8 << 5) | 0 = 256
+// The macro must swap the halves:
+#define SPR_ENCODE(spr) ( (((spr) & 0x1F) << 5) | (((spr) >> 5) & 0x1F) )
+
+#define SPR_LR		8
+#define SPR_CTR		9
+
+// mflr rt
+#define PPC_MFLR(rt)		PPC_XFX(31, rt, SPR_ENCODE(SPR_LR), 339)
+// mtlr rs
+#define PPC_MTLR(rs)		PPC_XFX(31, rs, SPR_ENCODE(SPR_LR), 467)
+// mfctr rt
+#define PPC_MFCTR(rt)		PPC_XFX(31, rt, SPR_ENCODE(SPR_CTR), 339)
+// mtctr rs
+#define PPC_MTCTR(rs)		PPC_XFX(31, rs, SPR_ENCODE(SPR_CTR), 467)
+
+// -- Floating-Point Load/Store (D-form) --
+// lfs frt, d(ra)  (load float single)
+#define PPC_LFS(frt, d, ra)		PPC_D(48, frt, ra, d)
+// lfd frt, d(ra)  (load float double)
+#define PPC_LFD(frt, d, ra)		PPC_D(50, frt, ra, d)
+// stfs frs, d(ra) (store float single)
+#define PPC_STFS(frs, d, ra)	PPC_D(52, frs, ra, d)
+// stfd frs, d(ra) (store float double)
+#define PPC_STFD(frs, d, ra)	PPC_D(54, frs, ra, d)
+
+// -- Floating-Point Load/Store indexed (X-form) --
+// lfsx frt, ra, rb
+#define PPC_LFSX(frt, ra, rb)	PPC_X(31, frt, ra, rb, 535, 0)
+// lfdx frt, ra, rb
+#define PPC_LFDX(frt, ra, rb)	PPC_X(31, frt, ra, rb, 599, 0)
+// stfsx frs, ra, rb
+#define PPC_STFSX(frs, ra, rb)	PPC_X(31, frs, ra, rb, 663, 0)
+// stfdx frs, ra, rb
+#define PPC_STFDX(frs, ra, rb)	PPC_X(31, frs, ra, rb, 727, 0)
+
+// -- Floating-Point Arithmetic (A-form) --
+// A-form: [opcode(6)][FRT(5)][FRA(5)][FRB(5)][FRC(5)][XO(5)][Rc(1)]
+#define PPC_A(op, frt, fra, frb, frc, xo, rc) \
+	( (((unsigned)(op)&0x3F)<<26) | (((unsigned)(frt)&0x1F)<<21) | \
+	  (((unsigned)(fra)&0x1F)<<16) | (((unsigned)(frb)&0x1F)<<11) | \
+	  (((unsigned)(frc)&0x1F)<<6) | (((unsigned)(xo)&0x1F)<<1) | \
+	  ((unsigned)(rc)&1) )
+
+// fadds frt, fra, frb
+#define PPC_FADDS(frt, fra, frb)	PPC_A(59, frt, fra, frb, 0, 21, 0)
+// fsubs frt, fra, frb
+#define PPC_FSUBS(frt, fra, frb)	PPC_A(59, frt, fra, frb, 0, 20, 0)
+// fmuls frt, fra, frc  (note: multiplier is in FRC field, FRB=0)
+#define PPC_FMULS(frt, fra, frc)	PPC_A(59, frt, fra, 0, frc, 25, 0)
+// fdivs frt, fra, frb
+#define PPC_FDIVS(frt, fra, frb)	PPC_A(59, frt, fra, frb, 0, 18, 0)
+// fneg frt, frb  (fra=0)
+#define PPC_FNEG(frt, frb)			PPC_X(63, frt, 0, frb, 40, 0)
+// fmr frt, frb  (fra=0)
+#define PPC_FMR(frt, frb)			PPC_X(63, frt, 0, frb, 72, 0)
+
+// fadd (double) frt, fra, frb
+#define PPC_FADD(frt, fra, frb)		PPC_A(63, frt, fra, frb, 0, 21, 0)
+// fsub (double) frt, fra, frb
+#define PPC_FSUB(frt, fra, frb)		PPC_A(63, frt, fra, frb, 0, 20, 0)
+
+// fsqrt frt, frb  (fra=0, frc=0)
+#define PPC_FSQRTS(frt, frb)		PPC_A(59, frt, 0, frb, 0, 22, 0)
+
+// -- Floating-Point Compare (X-form) --
+// fcmpu cr, fra, frb
+#define PPC_FCMPU(cr, fra, frb)		PPC_X(63, ((cr)<<2), fra, frb, 0, 0)
+
+// -- Floating-Point Conversion --
+// fctiwz frt, frb  (convert to integer word, round toward zero)
+#define PPC_FCTIWZ(frt, frb)		PPC_X(63, frt, 0, frb, 15, 0)
+
+// fcfids frt, frb  (convert from integer doubleword to single, Power ISA 2.06+)
+// This is the modern way to do int-to-float on Power7+
+#define PPC_FCFIDS(frt, frb)		PPC_X(59, frt, 0, frb, 846, 0)
+
+// -- Floating-Point round to single (frsp) --
+// frsp frt, frb  (round to single precision)
+#define PPC_FRSP(frt, frb)			PPC_X(63, frt, 0, frb, 12, 0)
+
+// -- ISA 3.0 (POWER9) integer modulo --
+#if USE_ISA_3_0
+// modsw rt, ra, rb  (signed word modulo)
+#define PPC_MODSW(rt, ra, rb)		PPC_X(31, rt, ra, rb, 779, 0)
+// moduw rt, ra, rb  (unsigned word modulo)
+#define PPC_MODUW(rt, ra, rb)		PPC_X(31, rt, ra, rb, 267, 0)
+
+// mtvsrws vsr, ra  (move to VSR word and splat: writes ra into all four word
+// elements of the destination VSR). Combined with xscvspdp this gives a
+// memory-free path from a GPR holding a 32-bit IEEE-754 single bit pattern to
+// an FPR holding the equivalent double-precision value.
+#define PPC_MTVSRWS(frt, ra)		PPC_X(31, frt, ra, 0, 403, 0)
+#endif
+
+// -- ISA 2.07 (POWER8) direct-move and VSX conversion --
+#if USE_ISA_2_07
+// mtvsrwa vsr, ra  (move to VSR word algebraic, sign-extends 32-bit GPR to 64-bit in VSR)
+// For FPR0-31 (VSR 0-31), SX=0.
+#define PPC_MTVSRWA(frt, ra)		PPC_X(31, frt, ra, 0, 211, 0)
+
+// mtvsrwя vsr, ra  (move to VSR word, zero-extension)
+// For FPR0-31 (VSR 0-31), SX=0.
+#define PPC_MTVSRWZ(frt, ra)		PPC_X(31, frt, ra, 0, 243, 0)
+
+// mfvsrwz ra, vsr  (move from VSR word and zero-extend, low 32 bits of VSR to GPR)
+// Note: instruction encoding has VSR in RS position, GPR in RA position.
+#define PPC_MFVSRWZ(ra, vsr)		PPC_X(31, vsr, ra, 0, 115, 0)
+
+// xscvdpsxws vrt, vrb  (convert scalar double-precision to signed word, saturate)
+// XX2-form: opcode 60, XO=88. For FPR0-31 (VSR 0-31, BX=TX=0).
+#define PPC_XSCVDPSXWS(vt, vb)		( (60u<<26) | (((unsigned)(vt)&0x1F)<<21) | (((unsigned)(vb)&0x1F)<<11) | (88u<<2) )
+
+// xscvdpsxws vrt, vrb  (convert scalar single-precision to double-precision)
+// XX2-form: opcode 60, XO=329. For FPR0-31 (VSR 0-31, BX=TX=0).
+#define PPC_XSCVSPDP(vt, vb)		( (60u<<26) | (((unsigned)(vt)&0x1F)<<21) | (((unsigned)(vb)&0x1F)<<11) | (329u<<2) )
+
+#endif
+
+// -- Trap --
+// trap  (tw 31, 0, 0)
+#define PPC_TRAP()			PPC_X(31, 31, 0, 0, 4, 0)
+
+// -- stwu/stdu for stack frame creation --
+// stwu rs, d(ra)
+#define PPC_STWU(rs, d, ra)		PPC_D(37, rs, ra, d)
+// stdu rs, ds(ra)
+#define PPC_STDU(rs, ds, ra)	PPC_DS(62, rs, ra, ds, 1)
+
+
+// =========================================================================
+// Code emission
+// =========================================================================
+
+static void emit( uint32_t isn )
+{
+	if ( code )
+	{
+		code[ compiledOfs >> 2 ] = isn;
+	}
+	compiledOfs += 4;
+}
+
+
+static void emitAlign( int align )
+{
+	while ( compiledOfs & ( align - 1 ) )
+		emit( PPC_NOP() );
+}
+
+
+static int getAlign( int align )
+{
+	return PAD( compiledOfs, align ) - compiledOfs;
+}
+
+
+// =========================================================================
+// 64-bit immediate loading
+// =========================================================================
+// Load a full 64-bit immediate into a register.
+// Uses up to 5 instructions for arbitrary 64-bit values.
+// PPC64 sequence: lis + ori + sldi + oris + ori
+
+static void emit_MOVi64( int rt, uint64_t imm )
+{
+	if ( imm == (uint64_t)(int16_t)imm ) {
+		// fits in signed 16-bit
+		emit( PPC_LI( rt, imm & 0xFFFF ) );
+		return;
+	}
+
+	if ( imm == (uint64_t)(int32_t)imm ) {
+		// fits in signed 32-bit
+		uint16_t hi = (imm >> 16) & 0xFFFF;
+		uint16_t lo = imm & 0xFFFF;
+		emit( PPC_LIS( rt, hi ) );
+		if ( lo )
+			emit( PPC_ORI( rt, rt, lo ) );
+		return;
+	}
+
+	// full 64-bit
+	uint16_t w3 = (imm >> 48) & 0xFFFF;
+	uint16_t w2 = (imm >> 32) & 0xFFFF;
+	uint16_t w1 = (imm >> 16) & 0xFFFF;
+	uint16_t w0 = imm & 0xFFFF;
+
+	if ( w3 ) {
+		emit( PPC_LIS( rt, w3 ) );
+		if ( w2 )
+			emit( PPC_ORI( rt, rt, w2 ) );
+	} else if ( w2 & 0x8000 ) {
+		// w2 has high bit set — can't use PPC_LI (would sign-extend)
+		// Use: li rt, 0; ori rt, rt, w2
+		emit( PPC_LI( rt, 0 ) );
+		emit( PPC_ORI( rt, rt, w2 ) );
+	} else {
+		emit( PPC_LI( rt, w2 ) );
+	}
+	// shift left 32 bits
+	emit( PPC_SLDI( rt, rt, 32 ) );
+	if ( w1 )
+		emit( PPC_ORIS( rt, rt, w1 ) );
+	if ( w0 )
+		emit( PPC_ORI( rt, rt, w0 ) );
+}
+
+// Load a 32-bit value into a register (zero-extended to 64-bit for unsigned,
+// or sign-extended for signed). For VM values these are 32-bit.
+static void emit_MOVi32( int rt, uint32_t imm )
+{
+	if ( (int32_t)imm >= -32768 && (int32_t)imm <= 32767 ) {
+		emit( PPC_LI( rt, imm & 0xFFFF ) );
+		return;
+	}
+
+	uint16_t hi = (imm >> 16) & 0xFFFF;
+	uint16_t lo = imm & 0xFFFF;
+	emit( PPC_LIS( rt, hi ) );
+	if ( lo )
+		emit( PPC_ORI( rt, rt, lo ) );
+}
+
+
+// -------------- virtual opStack management ---------------
+
+// array sizes for cached/meta registers
+#define NUM_RX_REGS 11 // max[R3..R10] + 1
+#define NUM_SX_REGS 8  // max[F0..F7] + 1
+
+// general-purpose register list available for dynamic allocation
+#ifdef DYN_ALLOC_RX
+static const uint32_t rx_list_alloc[] = {
+	R3, R4, R5, R6, R7, R8, R9, R10
+};
+#endif
+
+// FPU scalar register list available for dynamic allocation
+#ifdef DYN_ALLOC_SX
+static const uint32_t sx_list_alloc[] = {
+	F0, F1, F2, F3, F4, F5, F6, F7
+};
+#endif
+
+#ifdef CONST_CACHE_RX
+static const uint32_t rx_list_cache[] = {
+	R3, R4, R5, R6, R7, R8, R9, R10
+};
+#endif
+
+#ifdef CONST_CACHE_SX
+static const uint32_t sx_list_cache[] = {
+	F0, F1, F2, F3, F4, F5, F6, F7
+};
+#endif
+
+#include "vm_optimize.h"
+
+// platform-specific implementation:
+
+static void mov_rx( uint32_t dst, uint32_t src )
+{
+	emit( PPC_MR( dst, src ) );
+}
+
+
+static void mov_sx( uint32_t dst, uint32_t src )
+{
+	emit( PPC_FMR( dst, src ) );
+}
+
+
+static uint32_t split_rx( uint32_t reg )
+{
+	const uint32_t rx = alloc_rx( R5 );
+	unmask_rx( reg );
+	return rx;
+}
+
+
+static uint32_t split_sx( uint32_t reg )
+{
+	const uint32_t sx = alloc_sx( F5 );
+	unmask_sx( reg );
+	return sx;
+}
+
+
+static void mov_rx_sx( uint32_t gpreg, uint32_t fpreg )
+{
+//#if USE_ISA_2_07
+//	emit( PPC_MFVSRWZ( gpreg, fpreg ) ); // this didn't work properly
+//#else
+	emit( PPC_STFS( fpreg, 0, rPROCBASE ) ); // procBase[0] = fpreg
+	emit( PPC_LWZ( gpreg, 0, rPROCBASE ) );  // gpreg = procBase[0]
+//#endif
+}
+
+
+static void mov_sx_rx( uint32_t fpreg, uint32_t gpreg )
+{
+#if USE_ISA_3_0
+	// POWER9+: GPR -> FPR (single-precision bit pattern -> double in FPR)
+	// without a memory round-trip.
+	//
+	// The earlier attempt with mtvsrwz alone left the bits in word element 1
+	// of the VSR (low half of the high doubleword), but xscvspdp reads word
+	// element 0. mtvsrws splats the GPR into all four word elements, so the
+	// single-precision bit pattern is also in word element 0 where xscvspdp
+	// expects it. xscvspdp then converts that single to a double in the FPR,
+	// matching the result of stw + lfs exactly.
+	emit( PPC_MTVSRWS( fpreg, gpreg ) );  // VSR[fpreg].word[0..3] = gpreg
+	emit( PPC_XSCVSPDP( fpreg, fpreg ) ); // fpreg = (double)bitcast<float>(word0)
+#else
+	emit( PPC_STW( gpreg, 0, rPROCBASE ) ); // procBase[0] = gpreg
+	emit( PPC_LFS( fpreg, 0, rPROCBASE ) ); // fpreg = procBase[0]
+#endif
+}
+
+
+static void mov_rx_imm32( uint32_t reg, uint32_t imm32 )
+{
+	emit_MOVi32( reg, imm32 );
+}
+
+
+static void mov_sx_imm32( uint32_t reg, uint32_t imm32 )
+{
+	uint32_t rx = alloc_rx_const( R6 | TEMP, imm32 );
+	mov_sx_rx( reg, rx );
+	unmask_rx( rx );
+}
+
+
+static void mov_rx_local( uint32_t reg, const uint32_t addr )
+{
+	if ( (int16_t)addr == addr ) {
+		emit( PPC_ADDI( reg, rPSTACK, addr) );
+	} else {
+		if ( find_rx_const( addr ) ) {
+			uint32_t rx = alloc_rx_const( R6, addr );	// R6 = const addr
+			emit( PPC_ADD( reg, rPSTACK, rx ) );		// reg = pstack + R6
+			unmask_rx( rx );
+		} else {
+			mov_rx_imm32( reg, addr );				// reg = addr
+			emit( PPC_ADD( reg, rPSTACK, reg ) );	// reg = pStack + reg
+		}
+	}
+}
+
+
+static void mov_sx_local( uint32_t reg, const uint32_t addr )
+{
+	const uint32_t rx = alloc_rx_local( R6 | RCONST, addr );
+	mov_sx_rx( reg, rx );
+	unmask_rx( rx );
+}
+
+
+static void load4_rx( uint32_t reg, uint32_t offset )
+{
+	emit( PPC_LWZ( reg, offset, rOPSTACK ) );
+}
+
+
+static void load4_sx( uint32_t reg, uint32_t offset )
+{
+	emit( PPC_LFS( reg, offset, rOPSTACK ) );
+}
+
+
+static void store4_rx( uint32_t rx, uint32_t offset )
+{
+	emit( PPC_STW( rx, offset, rOPSTACK ) );
+}
+
+
+static void store4_sx( uint32_t sx, uint32_t offset )
+{
+	emit( PPC_STFS( sx, offset, rOPSTACK ) );
+}
+
+
+static void store4_const( uint32_t value, uint32_t offset )
+{
+	const uint32_t rx = alloc_rx_const( R6, value );
+	store4_rx( rx, offset );
+	unmask_rx( rx );
+}
+
+
+static void store4_local( uint32_t value, uint32_t offset )
+{
+	const uint32_t rx = alloc_rx_local( R6 | TEMP, value );
+	store4_rx( rx, offset );
+	unmask_rx( rx );
+}
+
+
+// =========================================================================
+// Helper offset calls
+// =========================================================================
+
+static void emitFuncOffset( vm_t *vm, offset_t func )
+{
+	int32_t offset = funcOffset[ func ] - compiledOfs;
+	emit( PPC_BL( offset ) );
+}
+
+
+static void emitFuncBranch( vm_t *vm, offset_t func )
+{
+	branchOffset[ func ] = compiledOfs;
+	emitFuncOffset( vm, func );
+}
+
+
+static void saveBranchOffsets( void )
+{
+	memcpy( savedBranchOffset, branchOffset, sizeof( savedBranchOffset ) );
+}
+
+
+static void restoreBranchOffsets( void )
+{
+	memcpy( branchOffset, savedBranchOffset, sizeof( branchOffset ) );
+}
+
+
+#ifdef FUNC_ALIGN
+// emit most distant branch in a slack space
+static void emitDistantBranchOffsets( vm_t *vm )
+{
+	int i, n = getAlign( FUNC_ALIGN ) / 4;
+	for ( i = 0; i < n; i++ ) {
+		int f, index = -1, m = compiledOfs;
+		for ( f = FUNC_ERR_BEGIN; f <= FUNC_ERR_END; f++ ) {
+			if ( branchOffset[f] == 0 ) {
+				continue; // disabled/inactive checks
+			}
+			if ( branchOffset[f] < m ) {
+				m = branchOffset[f];
+				index = f;
+			}
+		}
+		if ( index >= 0 ) {
+			emitFuncBranch( vm, (offset_t)index );
+		}
+	}
+}
+#endif // FUNC_ALIGN
+
+
+// =========================================================================
+// Error handler functions
+// =========================================================================
+
+static void VM_Destroy_Compiled( vm_t *vm )
+{
+	if ( vm->codeBase.ptr )
+	{
+		if ( munmap( vm->codeBase.ptr, vm->codeLength ) )
+			Com_Printf( S_COLOR_ERROR "%s(): memory unmap failed, possible memory leak!\n", __func__ );
+	}
+	vm->codeBase.ptr = NULL;
+}
+
+
+static void __attribute__((__noreturn__)) OutJump( void )
+{
+	Com_Error( ERR_DROP, "program tried to execute code outside VM" );
+}
+
+
+static void __attribute__((__noreturn__)) BadJump( void )
+{
+	Com_Error( ERR_DROP, "program tried to execute code at bad location inside VM" );
+}
+
+
+static void __attribute__((__noreturn__)) ErrBadProgramStack( void )
+{
+	Com_Error( ERR_DROP, "program tried to overflow programStack" );
+}
+
+
+static void __attribute__((__noreturn__)) ErrBadOpStack( void )
+{
+	Com_Error( ERR_DROP, "program tried to overflow opStack" );
+}
+
+
+#ifndef NDEBUG
+// Diagnostic: fired when emit_CheckReg sees a data-segment address whose
+// 64-bit value exceeds dataMask. The JIT loads the offending QVM ip into
+// R3 and the unmasked address into R4 before calling this stub, so we
+// can identify the buggy op directly from the error message.
+static void __attribute__((__noreturn__)) ErrHighBitsSet( int qvm_ip, uint64_t bad_addr )
+{
+	Com_Error( ERR_DROP,
+		"JIT: data address overflowed dataMask: ip=%d (0x%x) bad_addr=0x%llx",
+		qvm_ip, qvm_ip, (unsigned long long)bad_addr );
+}
+#endif
+
+
+// =========================================================================
+// Runtime check emission
+// =========================================================================
+
+// Data access check: mask the address to fit within the data segment.
+// reg holds the address; it is modified in place. This matches the
+// interpreter's 32-bit wrap semantics and side-effect-clears any high
+// bits left by a 64-bit ADD overflow (e.g. lwzx-loaded 0xFFFFFFFF +
+// positive constant), which the prior cmplw/bgt check could not detect.
+static void emit_CheckReg( vm_t *vm, int reg, int qvm_ip )
+{
+#ifndef NDEBUG
+	// Diagnostic trap: 64-bit unsigned compare reg against dataMask.
+	// On fail, hand ErrHighBitsSet(qvm_ip, bad_addr) via R3,R4 so the
+	// error message names the offending QVM op directly.
+	emit( PPC_CMPLD( 0, reg, rDATAMASK ) );
+	emit( PPC_BLE( +20 ) );                                  // skip 4 insns
+	emit( PPC_MR( R4, reg ) );                               // R4 = bad addr (full 64-bit)
+	emit( PPC_LIS( R3, ( qvm_ip >> 16 ) & 0xFFFF ) );        // R3 = ip hi
+	emit( PPC_ORI( R3, R3, qvm_ip & 0xFFFF ) );              // R3 |= ip lo
+	emitFuncBranch( vm, FUNC_HIBITSET );
+#else
+	(void)vm;
+	(void)qvm_ip;
+#endif
+	emit( PPC_AND( reg, reg, rDATAMASK ) );
+}
+
+
+// Jump target check
+static void emit_CheckJump( vm_t *vm, int reg, int proc_base, int proc_len )
+{
+	int32_t offset;
+	if ( ( vm_rtChecks->integer & VM_RTCHECK_JUMP ) == 0 ) {
+		return;
+	}
+
+	if ( proc_base != -1 ) {
+		// allow jump within local function scope only
+		if ( (int16_t)proc_base == proc_base ) {
+			emit( PPC_ADDI( R11, reg, -proc_base ) ); // r11 = reg - proc_base
+		} else {
+			mov_rx_imm32( R11, proc_base );
+			emit( PPC_SUB( R11, reg, R11 ) );
+		}
+		// check if r11 > proc_len (unsigned, so negative wraps to large)
+		mov_rx_imm32( R12, proc_len );
+		emit( PPC_CMPLW( 0, R11, R12 ) );
+
+		offset = branchOffset[ FUNC_BADJ ] - compiledOfs;
+		if ( (int16_t)offset == offset ) {
+			emit( PPC_BGT( offset ) );	// unsigned >
+		} else {
+			emit( PPC_BLE( +8 ) );		// unsigned <=
+			emitFuncBranch( vm, FUNC_BADJ );
+		}
+	} else {
+		// generic check: reg >= instructionCount
+		mov_rx_imm32( R11, vm->instructionCount );
+		emit( PPC_CMPLW( 0, reg, R11 ) );
+
+		offset = branchOffset[ FUNC_OUTJ ] - compiledOfs;
+		if ( (int16_t)offset == offset ) {
+			emit( PPC_BGE( offset ) );	// unsigned >=
+		} else {
+			emit( PPC_BLT( +8 ) );		// unsigned <
+			emitFuncBranch( vm, FUNC_OUTJ );
+		}
+	}
+}
+
+
+// Program stack overflow check
+static void emit_CheckProc( vm_t *vm, instruction_t *ins )
+{
+	// programStack overflow check
+	if ( vm_rtChecks->integer & VM_RTCHECK_PSTACK ) {
+		int32_t offset;
+		emit( PPC_CMPW( 0, rPSTACK, rPSTACKBOTTOM ) );
+
+		offset = branchOffset[FUNC_PSOF] - compiledOfs;
+		if ( (int16_t)offset == offset ) {
+			emit( PPC_BLT( offset ) );	// signed <
+		} else {
+			emit( PPC_BGE( +8 ) );		// signed >=
+			emitFuncBranch( vm, FUNC_PSOF );
+		}
+	}
+
+	// opStack overflow check
+	if ( vm_rtChecks->integer & VM_RTCHECK_OPSTACK ) {
+		int32_t offset;
+		uint32_t n = ins->opStack;
+		mov_rx_imm32( R11, n );
+		emit( PPC_ADD( R11, rOPSTACK, R11 ) );
+		emit( PPC_CMPLD( 0, R11, rOPSTACKTOP ) ); //
+
+		offset = branchOffset[FUNC_PSOF] - compiledOfs;
+		if ( (int16_t)offset == offset ) {
+			emit( PPC_BGT( offset ) );	// unsigned >
+		} else {
+			emit( PPC_BLE( +8 ) );		// unsigned <=
+			emitFuncBranch( vm, FUNC_OSOF );
+		}
+	}
+}
+
+
+// =========================================================================
+// Call dispatch helper emission
+// =========================================================================
+
+static void emitCallFunc( vm_t *vm )
+{
+	int i;
+
+	init_opstack();
+
+funcOffset[ FUNC_CALL ] = compiledOfs;
+
+	// R3 holds the call number (loaded by OP_CALL)
+	// if callnum < 0 => syscall
+	emit( PPC_CMPWI( 0, R3, 0 ) );
+	emit( PPC_BLT( funcOffset[ FUNC_SYSC ] - compiledOfs ) );
+
+	// check if R3 >= instructionCount
+	emit_CheckJump( vm, R3, -1, 0 );
+
+	// local function call: branch to instructionPointers[R3]
+	// R11 = R3 << 3 (intptr_t is 8 bytes on ppc64)
+	emit( PPC_RLWINM( R11, R3, 3, 0, 28 ) );  // R11 = R3 << 3, clearing upper bits
+	emit( PPC_LDX( R11, rINSPOINTERS, R11 ) ); // R11 = instructionPointers[R3]
+	emit( PPC_MTCTR( R11 ) );
+	emit( PPC_BCTR() );
+
+funcOffset[ FUNC_SYSC ] = compiledOfs;
+
+	// syscall: negate callnum
+	// R3 = ~R3 (not R3, R3)
+	emit( PPC_NOT( R3, R3 ) );
+
+funcOffset[ FUNC_SYSF ] = compiledOfs;
+
+	// Stack frame layout for syscall handler:
+	//
+	// ELFv1 ABI (ppc64 big-endian):
+	//   SP+0:    back chain (8)
+	//   SP+8:    CR save (8)
+	//   SP+16:   LR save area (8)
+	//   SP+24:   compiler/linker (8)
+	//   SP+32:   reserved (8)
+	//   SP+40:   TOC save (8) -- save R2 here before external call
+	//   SP+48:   parameter save area (64 bytes, 8 slots)
+	//   SP+112:  args[0..15] (16 * 8 = 128 bytes) -- local storage
+	//   SP+240:  our saved LR (8)
+	//   SP+248:  our saved rOPSTACK (8)
+	//   Total:   256 bytes (16-byte aligned)
+	//
+	// ELFv2 ABI (ppc64le):
+	//   SP+0:    back chain (8)
+	//   SP+32:   args[0..15] (16 * 8 = 128 bytes) -- parameter/local area
+	//   SP+160:  our saved LR (8)
+	//   SP+168:  our saved rOPSTACK (8)
+	//   Total:   176 bytes (16-byte aligned)
+#ifdef PPC64_ELFv1
+	#define SYSC_FRAME 256
+	#define SYSC_ARGS  112     // offset to args array within frame
+	#define SYSC_LR    240     // offset to our saved LR
+	#define SYSC_OPST  248     // offset to our saved rOPSTACK
+	#define SYSC_TOC   40      // offset to TOC save slot
+#else
+	#define SYSC_FRAME 176
+	#define SYSC_ARGS  32      // offset to args array within frame
+	#define SYSC_LR    160     // offset to our saved LR
+	#define SYSC_OPST  168     // offset to our saved rOPSTACK
+#endif
+
+	// Allocate stack space
+	emit( PPC_STDU( SP, -SYSC_FRAME, SP ) );
+
+	// Save LR (will be clobbered by bctrl)
+	emit( PPC_MFLR( R0 ) );
+	emit( PPC_STD( R0, SYSC_LR, SP ) );
+
+	// Save opStack on stack too
+	emit( PPC_STD( rOPSTACK, SYSC_OPST, SP ) );
+
+	// modify VM stack pointer for recursive VM entry
+	// vm->programStack = pstack - 8
+	emit( PPC_ADDI( R4, rPSTACK, -8 ) );
+	emit( PPC_STW( R4, offsetof(vm_t, programStack), rVMBASE ) );
+
+	// Sign-extend 32-bit args from procBase to intptr_t and store in args array
+	// args[0] = R3 (syscall number, already set)
+	// args[1..15] from procBase+8, procBase+12, ..., procBase+68
+	emit( PPC_EXTSW( R3, R3 ) );  // sign-extend syscall number
+	emit( PPC_STD( R3, SYSC_ARGS + 0, SP ) );
+
+	for ( i = 1; i < 16; i++ ) {
+		emit( PPC_LWA( R0, 4 + i * 4, rPROCBASE ) );
+		emit( PPC_STD( R0, SYSC_ARGS + i * 8, SP ) );
+	}
+
+	// R3 = pointer to args array
+	emit( PPC_ADDI( R3, SP, SYSC_ARGS ) );
+
+	// Load vm->systemCall and call it
+#ifdef PPC64_ELFv1
+	// ELFv1: vm->systemCall is a function descriptor pointer
+	// descriptor[0] = entry point, descriptor[1] = TOC, descriptor[2] = env
+	emit( PPC_LD( R11, offsetof(vm_t, systemCall), rVMBASE ) ); // R11 = descriptor ptr
+	emit( PPC_STD( R2, SYSC_TOC, SP ) );                       // save our TOC
+	emit( PPC_LD( R0, 0, R11 ) );                               // R0 = entry point
+	emit( PPC_LD( R2, 8, R11 ) );                               // R2 = callee's TOC
+	emit( PPC_MTCTR( R0 ) );
+	emit( PPC_BCTRL() );
+	emit( PPC_LD( R2, SYSC_TOC, SP ) );                        // restore our TOC
+#else
+	// ELFv2: vm->systemCall is the entry point directly
+	// ELFv2 ABI requires R12 = target address before bctrl
+	emit( PPC_LD( R12, offsetof(vm_t, systemCall), rVMBASE ) );
+	emit( PPC_MTCTR( R12 ) );
+	emit( PPC_BCTRL() );
+#endif
+
+	// Return value is in R3, store it to opstack+4
+	emit( PPC_STW( R3, 4, rOPSTACK ) );
+
+	// Restore opStack
+	emit( PPC_LD( rOPSTACK, SYSC_OPST, SP ) );
+
+	// Restore LR
+	emit( PPC_LD( R0, SYSC_LR, SP ) );
+	emit( PPC_MTLR( R0 ) );
+
+	// Destroy stack frame
+	emit( PPC_ADDI( SP, SP, SYSC_FRAME ) );
+
+	emit( PPC_BLR() );
+}
+
+
+// =========================================================================
+// Block copy helper
+// =========================================================================
+// On entry: R3 = src offset, R4 = dst offset, R5 = count, R6 - scratch
+
+static void emitBlockCopyFunc( vm_t *vm )
+{
+	// Mask src and dst
+	emit( PPC_AND( R3, R3, rDATAMASK ) );
+	emit( PPC_AND( R4, R4, rDATAMASK ) );
+
+	// Clamp count: src + count must not exceed dataMask+1
+	emit( PPC_ADD( R6, R3, R5 ) );         // R6 = src + count
+	emit( PPC_AND( R6, R6, rDATAMASK ) );  // R6 &= dataMask
+	emit( PPC_SUB( R5, R6, R3 ) );         // count = R6 - src
+
+	emit( PPC_ADD( R6, R4, R5 ) );         // R6 = dst + count
+	emit( PPC_AND( R6, R6, rDATAMASK ) );  // R6 &= dataMask
+	emit( PPC_SUB( R5, R6, R4 ) );         // count = R6 - dst
+
+	// Convert offsets to pointers
+	emit( PPC_ADD( R3, R3, rDATABASE ) );  // src = src + dataBase
+	emit( PPC_ADD( R4, R4, rDATABASE ) );  // dst = dst + dataBase
+
+	// Byte copy loop
+	// while (count > 0) { *dst++ = *src++; count--; }
+	emit( PPC_CMPWI( 0, R5, 0 ) );
+	emit( PPC_BLE( +24 ) );  // skip if count <= 0
+
+	// loop:
+	emit( PPC_LBZ( R6, 0, R3 ) );         // R6 = *src
+	emit( PPC_STB( R6, 0, R4 ) );         // *dst = R6
+	emit( PPC_ADDI( R3, R3, 1 ) );        // src++
+	emit( PPC_ADDI( R4, R4, 1 ) );        // dst++
+	//emit( PPC_LWZ( R6, 0, R3 ) );         // R6 = *src
+	//emit( PPC_STW( R6, 0, R4 ) );         // *dst = R6
+	//emit( PPC_ADDI( R3, R3, 4 ) );        // src++
+	//emit( PPC_ADDI( R4, R4, 4 ) );        // dst++
+
+	emit( PPC_ADDI( R5, R5, -1 ) );       // count--
+	emit( PPC_CMPWI( 0, R5, 0 ) );
+	emit( PPC_BGT( -24 ) );               // loop if count > 0
+
+	emit( PPC_BLR() );
+}
+
+
+static void emitFuncEntry( const void *func )
+{
+	// ELFv1: function pointer is a descriptor; resolve entry+TOC at JIT compile time
+#ifdef PPC64_ELFv1
+	const intptr_t* desc = (intptr_t*)(intptr_t)func;
+	emit_MOVi64( R0, desc[0] );
+	emit_MOVi64( R2, desc[1] );
+	emit( PPC_MTCTR( R0 ) );
+	emit( PPC_BCTRL() );
+#else
+	emit_MOVi64( R12, (intptr_t)func );
+	emit( PPC_MTCTR( R12 ) );
+	emit( PPC_BCTRL() );
+#endif
+}
+
+
+// =========================================================================
+// Condition code mapping for integer comparisons
+// =========================================================================
+
+// For OP_EQ..OP_GEU, map opcode to the PPC branch instruction to take
+// when the condition is TRUE.
+// After cmpw/cmplw, CR0 bits are: LT, GT, EQ, SO
+//
+// PPC bc (B-form) has only a 14-bit BD field => +-32KB range.
+// Since the two-pass compilation model requires both passes to produce
+// identical instruction counts, and forward branch targets are unknown
+// during the sizing pass, we always use the long-branch pattern:
+//   bc <inverted_cond>, +8   ; skip over the 'b' if condition is FALSE
+//   b  target                ; unconditional branch to real target (+-128MB)
+// This costs one extra instruction per conditional branch but is safe
+// for any VM size.
+
+// Map an opcode to (BO, BI) for the TRUE condition
+static void get_branch_cond( int op, int *bo, int *bi )
+{
+	switch ( op ) {
+		case OP_EQ:  case OP_EQF: *bo = BO_TRUE;  *bi = BI_EQ; break;
+		case OP_NE:  case OP_NEF: *bo = BO_FALSE; *bi = BI_EQ; break;
+		case OP_LTI: case OP_LTU: case OP_LTF: *bo = BO_TRUE;  *bi = BI_LT; break;
+		case OP_LEI: case OP_LEU: case OP_LEF: *bo = BO_FALSE; *bi = BI_GT; break;
+		case OP_GTI: case OP_GTU: case OP_GTF: *bo = BO_TRUE;  *bi = BI_GT; break;
+		case OP_GEI: case OP_GEU: case OP_GEF: *bo = BO_FALSE; *bi = BI_LT; break;
+		default: DROP( "incorrect opcode %i", op ); break;
+	}
+}
+
+
+#if 0
+static void emit_branchConditional( vm_t *vm, instruction_t *ci, int op )
+{
+	int32_t target = ci->value;  // target instruction index
+	int32_t targetOfs = vm->instructionPointers[ target ] - compiledOfs;
+	int bo, bi;
+
+	get_branch_cond( op, &bo, &bi );
+
+	// Long form: inverted bc skips over unconditional b
+	// Invert: BO_TRUE(12) <-> BO_FALSE(4)
+	{
+		int inv_bo = ( bo == BO_TRUE ) ? BO_FALSE : BO_TRUE;
+		emit( PPC_BC( inv_bo, bi, +8 ) );  // skip next instruction if NOT condition
+		emit( PPC_B( targetOfs - 4 ) );    // -4 because compiledOfs advanced by 4
+	}
+}
+#endif
+
+
+static qboolean isLongOffset( int32_t offset ) {
+	if ( (int16_t)offset != offset ) {
+		return qtrue;
+	}
+	//if ( (int8_t)offset != offset ) {
+	//	return qtrue; // easy trigger
+	//}
+	return qfalse;
+}
+
+
+static qboolean emit_branchConditionalShort( vm_t* vm, instruction_t* ci )
+{
+	int32_t targetOfs;
+	int bo, bi;
+
+	get_branch_cond( ci->op, &bo, &bi );
+
+	if ( pass != PASS_INIT ) {
+		targetOfs = vm->instructionPointers[ ci->value ] - compiledOfs;
+		if ( isLongOffset( targetOfs ) ) {
+			if ( ci->njump ) {
+				ci->njump = 0;
+				if ( targetOfs > 0 ) {
+					jumpSizeChanged |= 1;
+				} else {
+					// backward jumps can be safely expanded
+				}
+			}
+		}
+	} else {
+		targetOfs = 0; // unknown at PASS_INIT
+	}
+
+	if ( ci->njump ) {
+		emit( PPC_BC( bo, bi, targetOfs ) );
+		return qtrue;
+	} else {
+		const int inv_bo = (bo == BO_TRUE) ? BO_FALSE : BO_TRUE;
+		emit( PPC_BC( inv_bo, bi, +8 ) );  // skip next instruction if NOT condition
+		emit( PPC_B( targetOfs - 4 ) );    // -4 because compiledOfs advanced by 4
+		return qfalse;
+	}
+}
+
+
+#ifdef CONST_OPTIMIZE
+static qboolean ConstOptimize( vm_t* vm, instruction_t* ci, instruction_t* ni )
+{
+	uint32_t rx[2];
+
+	if ( ni->jused ) {
+		return qfalse;
+	}
+
+	switch ( ni->op ) {
+		case OP_ADD:
+		case OP_SUB:
+		case OP_MULI:
+		case OP_MULU:
+			// PPC ADDI/MULLI take a signed 16-bit immediate
+			if ( (int16_t)ci->value != ci->value )
+				return qfalse;
+			// SUB folds via ADDI(-imm); guard against the -INT16_MIN overflow
+			if ( ni->op == OP_SUB && ci->value == INT16_MIN )
+				return qfalse;
+			load_rx_opstack2( &rx[1], R4, &rx[0], R3 ); // r4 = r3 = *opStack
+			switch ( ni->op ) {
+				case OP_ADD: emit( PPC_ADDI( rx[1], rx[0], ci->value ) ); break;
+				case OP_SUB: emit( PPC_ADDI( rx[1], rx[0], -ci->value ) ); break;
+				case OP_MULI:
+				case OP_MULU: emit( PPC_MULLI( rx[1], rx[0], ci->value ) ); break;
+			};
+			if ( rx[0] != rx[1] ) {
+				unmask_rx( rx[0] );
+			}
+			store_rx_opstack( rx[1] );				// *opStack = r4
+			ip += 1;
+			return qtrue;
+
+		case OP_BAND:
+		case OP_BOR:
+		case OP_BXOR:
+			// PPC ANDI/ORI/XORI take an UNSIGNED 16-bit immediate that is
+			// zero-extended to 32 bits. Folding a CONST whose upper 16 bits
+			// are non-zero (e.g. negative values like -4 for pointer
+			// alignment) would silently clobber the upper half of the
+			// operand. Fall back to the non-folded path in that case.
+			if ( ( (uint32_t)ci->value & 0xFFFF0000u ) != 0 )
+				return qfalse;
+			load_rx_opstack2( &rx[1], R4, &rx[0], R3 ); // r4 = r3 = *opStack
+			switch ( ni->op ) {
+				case OP_BAND: emit( PPC_ANDI( rx[1], rx[0], ci->value ) ); break;
+				case OP_BOR:  emit( PPC_ORI( rx[1], rx[0], ci->value ) ); break;
+				case OP_BXOR: emit( PPC_XORI( rx[1], rx[0], ci->value ) ); break;
+			};
+			if ( rx[0] != rx[1] ) {
+				unmask_rx( rx[0] );
+			}
+			store_rx_opstack( rx[1] );				// *opStack = r4
+			ip += 1; // OP_ADD | OP_SUB | OP_MULI | OP_MULU
+			return qtrue;
+
+		case OP_RSHI:
+			if ( ci->value < 1 || ci->value > 31 )
+				return qfalse;
+			load_rx_opstack2( &rx[1], R4, &rx[0], R3 ); // r4 = r3 = *opStack
+			emit( PPC_SRAWI( rx[1], rx[0], ci->value ) );
+			if ( rx[0] != rx[1] ) {
+				unmask_rx( rx[0] );
+			}
+			store_rx_opstack( rx[1] );				// *opstack = r4
+			ip += 1; // OP_RSHI
+			return qtrue;
+
+		case OP_LSH:
+		case OP_RSHU:
+			if ( ci->value < 1 || ci->value > 31 )
+				return qfalse;
+			load_rx_opstack2( &rx[1], R4, &rx[0], R3 ); // r4 = r3 = *opStack
+			if ( ni->op == OP_LSH ) {
+				emit( PPC_RLWINM( rx[1], rx[0], ci->value, 0, 31 - ci->value ) );
+			} else {
+				emit( PPC_RLWINM( rx[1], rx[0], 32 - ci->value, ci->value, 31 ) );
+			}
+			if ( rx[0] != rx[1] ) {
+				unmask_rx( rx[0] );
+			}
+			store_rx_opstack( rx[1] );				// *opStack = r4
+			ip += 1; // OP_LSH/OP_RSHU
+			return qtrue;
+
+
+		case OP_JUMP:
+			flush_opstack();
+			emit( PPC_B( vm->instructionPointers[ci->value] - compiledOfs ) );
+			ip += 1; // OP_JUMP
+			return qtrue;
+
+		case OP_CALL:
+			inc_opstack(); // opstack += 4
+			if ( ci->value == ~TRAP_SQRT ) {
+				uint32_t sx = alloc_sx( F0 | TEMP );
+				emit( PPC_LFS( sx, 8, rPROCBASE ) ); // F0 = [procBase + 8]
+				emit( PPC_FSQRTS( sx, sx ) );        // F0 = fsqrts(F0)
+				store_sx_opstack( sx );
+				ip += 1; // OP_CALL
+				return qtrue;
+			}
+			flush_volatile();
+			if ( ci->value < 0 ) { // syscall
+				mask_rx( R3 );
+				mov_rx_imm32( R3, ~ci->value ); // r3 = syscall number
+				if ( opstack != 1 ) {
+					emit( PPC_ADDI( rOPSTACK, rOPSTACK, (opstack - 1) * sizeof( int32_t ) ) );
+					emitFuncOffset( vm, FUNC_SYSF );
+					emit( PPC_ADDI( rOPSTACK, rOPSTACK, -(opstack - 1) * sizeof( int32_t ) ) );
+				} else {
+					emitFuncOffset( vm, FUNC_SYSF );
+				}
+				store_syscall_opstack( R3 );    // mark *opStack = r3
+				ip += 1; // OP_CALL
+				return qtrue;
+			}
+			if ( opstack != 1 ) {
+				emit( PPC_ADDI( rOPSTACK, rOPSTACK, (opstack - 1) * sizeof( int32_t ) ) );
+				emit( PPC_BL( vm->instructionPointers[ci->value] - compiledOfs ) );
+				emit( PPC_ADDI( rOPSTACK, rOPSTACK, -(opstack - 1) * sizeof( int32_t ) ) );
+			} else {
+				emit( PPC_BL( vm->instructionPointers[ci->value] - compiledOfs ) );
+			}
+			ip += 1; // OP_CALL
+			return qtrue;
+
+		case OP_EQ:
+		case OP_NE:
+		case OP_LTI:
+		case OP_LEI:
+		case OP_GTI:
+		case OP_GEI:
+		case OP_LTU:
+		case OP_LEU:
+		case OP_GTU:
+		case OP_GEU:
+			// PPC CMPWI takes signed 16-bit (sign-extended); CMPLWI takes
+			// UNSIGNED 16-bit (zero-extended).  For unsigned comparisons
+			// we must reject negative ci->value (= upper 16 bits set in
+			// the 32-bit form) to avoid silently comparing against the
+			// 16-bit truncated value.
+			switch ( ni->op ) {
+				case OP_LTU:
+				case OP_LEU:
+				case OP_GTU:
+				case OP_GEU:
+					if ( ( (uint32_t)ci->value & 0xFFFF0000u ) != 0 )
+						return qfalse;
+					break;
+				default:
+					if ( (int16_t)ci->value != ci->value )
+						return qfalse;
+					break;
+			}
+			rx[0] = load_rx_opstack( R3 | RCONST ); dec_opstack(); // r3 = *opstack; opstack -= 4
+			flush_nonvolatile();
+			switch ( ni->op ) {
+				case OP_LTU:
+				case OP_LEU:
+				case OP_GTU:
+				case OP_GEU:
+					emit( PPC_CMPLWI( 0, rx[0], ci->value ) ); break;
+				default:
+					emit( PPC_CMPWI( 0, rx[0], ci->value ) ); break;
+			}
+			emit_branchConditionalShort( vm, ni );
+			unmask_rx( rx[0] );
+			ip += 1; // OP_cond
+			return qtrue;
+
+		default:
+			break;
+	}
+	return qfalse;
+}
+#endif // CONST_OPTIMIZE
+
+
+// =========================================================================
+// VM_Compile
+// =========================================================================
+
+qboolean VM_Compile( vm_t *vm, vmHeader_t *header )
+{
+	const char *errMsg;
+	instruction_t *ci;
+	uint32_t rx[4];
+	uint32_t sx[3];
+	var_addr_t var;
+	int proc_base;
+	int proc_len;
+	int proc_end;
+	int i;
+
+	inst = (instruction_t*)Z_Malloc( (header->instructionCount + 8) * sizeof( instruction_t ) );
+
+	errMsg = VM_LoadInstructions( (byte *)header + header->codeOffset, header->codeLength, header->instructionCount, inst );
+	if ( !errMsg ) {
+		errMsg = VM_CheckInstructions( inst, vm->instructionCount, vm->jumpTableTargets, vm->numJumpTableTargets, vm->exactDataLength );
+	}
+
+	if ( errMsg ) {
+		VM_FreeBuffers();
+		Com_Printf( S_COLOR_WARNING "%s(%s) error: %s\n", __func__, vm->name, errMsg );
+		return qfalse;
+	}
+
+	if ( !vm->instructionPointers ) {
+		vm->instructionPointers = Hunk_Alloc( header->instructionCount * sizeof(vm->instructionPointers[0]), h_high );
+	}
+
+	VM_ReplaceInstructions( vm, inst );
+
+	// assume near jumps by default, do expansion on demand
+	for ( i = 0; i < header->instructionCount; i++ ) {
+		inst[i].njump = 1;
+	}
+
+	memset( funcOffset, 0, sizeof( funcOffset ) );
+
+	code = NULL;
+	vm->codeBase.ptr = NULL;
+
+	for ( pass = 0; pass < NUM_PASSES; pass++ ) {
+__recompile:
+
+	// translate all instructions
+	ip = 0;
+	compiledOfs = 0;
+	jumpSizeChanged = 0;
+
+	memset( branchOffset, 0, sizeof( branchOffset ) );
+
+	proc_base = -1;
+	proc_len = 0;
+	proc_end = 0;
+
+	init_opstack();
+
+	// ===== PROLOGUE =====
+	// Create stack frame, save callee-saved registers and LR
+	// We need to save: LR, R14-R22 (9 GPRs)
+	// Stack frame: 16-byte aligned
+	//
+	// ELFv1 ABI (ppc64 big-endian):
+	//   SP+0:    back chain (8)
+	//   SP+8:    CR save (8)
+	//   SP+16:   LR save area (8)
+	//   SP+24:   compiler/linker (8)
+	//   SP+32:   reserved (8)
+	//   SP+40:   TOC save (8)
+	//   SP+48:   parameter save area (64 bytes, 8 slots)
+	//   SP+112:  first available for locals
+	//   R14-R22 saved at SP+112..SP+176 (9 * 8 = 72)
+	//   Total: 184, rounded up to 192
+	//
+	// ELFv2 ABI (ppc64le):
+	//   SP+0:    back chain (8)
+	//   SP+32:   first available for locals (no mandatory parameter save area)
+	//   R14-R22 saved at SP+48..SP+112 (9 * 8 = 72)
+	//   Total: 120, we use 160 (generous, 16-byte aligned)
+
+#ifdef PPC64_ELFv1
+	#define FRAME_SIZE 192
+	#define FRAME_GPR_BASE 112  // first callee-saved GPR save offset
+#else
+	#define FRAME_SIZE 160
+	#define FRAME_GPR_BASE 48
+#endif
+
+	// Create stack frame
+	emit( PPC_STDU( SP, -FRAME_SIZE, SP ) );
+
+	// Save LR in caller's frame (standard position: caller's SP+16)
+	emit( PPC_MFLR( R0 ) );
+	emit( PPC_STD( R0, FRAME_SIZE + 16, SP ) );
+
+	// Save callee-saved GPRs
+	emit( PPC_STD( R14, FRAME_GPR_BASE + 0, SP ) );
+	emit( PPC_STD( R15, FRAME_GPR_BASE + 8, SP ) );
+	emit( PPC_STD( R16, FRAME_GPR_BASE + 16, SP ) );
+	emit( PPC_STD( R17, FRAME_GPR_BASE + 24, SP ) );
+	emit( PPC_STD( R18, FRAME_GPR_BASE + 32, SP ) );
+	emit( PPC_STD( R19, FRAME_GPR_BASE + 40, SP ) );
+	emit( PPC_STD( R20, FRAME_GPR_BASE + 48, SP ) );
+	emit( PPC_STD( R21, FRAME_GPR_BASE + 56, SP ) );
+	emit( PPC_STD( R22, FRAME_GPR_BASE + 64, SP ) );
+
+	// Load VM state into dedicated registers
+	emit_MOVi64( rVMBASE, (intptr_t)vm );
+	emit_MOVi64( rINSPOINTERS, (intptr_t)vm->instructionPointers );
+	emit_MOVi64( rDATABASE, (intptr_t)vm->dataBase );
+
+	mov_rx_imm32( rDATAMASK, vm->dataMask );
+	mov_rx_imm32( rPSTACKBOTTOM, vm->stackBottom );
+
+	// Load volatile VM state from vm_t struct
+	emit( PPC_LD( rOPSTACK, offsetof(vm_t, opStack), rVMBASE ) );
+	emit( PPC_LD( rOPSTACKTOP, offsetof(vm_t, opStackTop), rVMBASE ) );
+	emit( PPC_LWZ( rPSTACK, offsetof(vm_t, programStack), rVMBASE ) );
+
+	// Branch to FUNC_ENTR (vmMain entry point)
+	emitFuncOffset( vm, FUNC_ENTR );
+
+	// ===== EPILOGUE =====
+#ifdef DEBUG_VM
+	// Store programStack back for debugging
+	emit( PPC_STW( rPSTACK, offsetof(vm_t, programStack), rVMBASE ) );
+#endif
+
+	// Restore callee-saved GPRs
+	emit( PPC_LD( R14, FRAME_GPR_BASE + 0, SP ) );
+	emit( PPC_LD( R15, FRAME_GPR_BASE + 8, SP ) );
+	emit( PPC_LD( R16, FRAME_GPR_BASE + 16, SP ) );
+	emit( PPC_LD( R17, FRAME_GPR_BASE + 24, SP ) );
+	emit( PPC_LD( R18, FRAME_GPR_BASE + 32, SP ) );
+	emit( PPC_LD( R19, FRAME_GPR_BASE + 40, SP ) );
+	emit( PPC_LD( R20, FRAME_GPR_BASE + 48, SP ) );
+	emit( PPC_LD( R21, FRAME_GPR_BASE + 56, SP ) );
+	emit( PPC_LD( R22, FRAME_GPR_BASE + 64, SP ) );
+
+	// Restore LR
+	emit( PPC_LD( R0, FRAME_SIZE + 16, SP ) );
+	emit( PPC_MTLR( R0 ) );
+
+	// Destroy stack frame
+	emit( PPC_ADDI( SP, SP, FRAME_SIZE ) );
+
+	// Return
+	emit( PPC_BLR() );
+
+#ifdef FUNC_ALIGN
+	emitAlign( FUNC_ALIGN );
+#endif
+
+	// emit initial branch offsets
+	if ( vm_rtChecks->integer & VM_RTCHECK_PSTACK ) {
+		emitFuncBranch( vm, FUNC_PSOF );
+	}
+	if ( vm_rtChecks->integer & VM_RTCHECK_OPSTACK ) {
+		emitFuncBranch( vm, FUNC_OSOF );
+	}
+	if ( vm_rtChecks->integer & VM_RTCHECK_JUMP ) {
+		emitFuncBranch( vm, FUNC_OUTJ );
+		emitFuncBranch( vm, FUNC_BADJ );
+	}
+#ifndef NDEBUG
+	// FUNC_HIBITSET is emitted unconditionally in debug builds so that
+	// emit_CheckReg's diagnostic trap can reach it via a short bl.
+	emitFuncBranch( vm, FUNC_HIBITSET );
+#endif
+
+	saveBranchOffsets();
+
+#ifdef FUNC_ALIGN
+	emitAlign( FUNC_ALIGN );
+#endif
+
+	funcOffset[ FUNC_ENTR ] = compiledOfs; // offset to vmMain() entry point
+
+	// ===== MAIN COMPILATION LOOP =====
+	while ( ip < header->instructionCount ) {
+
+		ci = &inst[ ip ];
+
+#ifdef REGS_OPTIMIZE
+		if ( ci->jused )
+#endif
+		{
+			// we can safely perform register optimizations only in case if
+			// we are 100% sure that current instruction is not a jump label
+			flush_opstack();
+		}
+
+		vm->instructionPointers[ ip ] = compiledOfs;
+		ip++;
+
+		switch ( ci->op )
+		{
+			case OP_UNDEF:
+				emit( PPC_TRAP() );
+				break;
+
+			case OP_IGNORE:
+				ip += ci->value;
+				break;
+
+			case OP_BREAK:
+				emit( PPC_TRAP() );
+				break;
+
+			case OP_ENTER:
+#ifdef FUNC_ALIGN
+				if ( ip != 0 )
+					emitDistantBranchOffsets( vm );
+
+				emitAlign( FUNC_ALIGN );
+#endif
+				vm->instructionPointers[ ip - 1 ] = compiledOfs;
+
+				proc_base = ip; // next instruction after OP_ENTER
+				// locate endproc
+				for ( proc_len = -1, i = ip; i < header->instructionCount; i++ ) {
+					if ( inst[ i ].op == OP_PUSH && inst[ i + 1 ].op == OP_LEAVE ) {
+						proc_len = i - proc_base;
+						proc_end = i + 1;
+						break;
+					}
+				}
+
+				if ( proc_len == 0 ) {
+					// empty function, just return
+					emit( PPC_BLR() );
+					proc_base = -1;
+					ip += 2; // skip OP_PUSH + OP_LEAVE
+					break;
+				}
+
+				// Save LR, opStack, pStack, procBase on native stack
+				// ELFv1: minimum frame is 112 bytes, locals start at 112
+				// ELFv2: minimum frame is 32 bytes, locals start at 32
+				// Scratch space for CVIF/CVFI is at ENTER_SCRATCH (8 bytes)
+#ifdef PPC64_ELFv1
+				#define ENTER_FRAME    160
+				#define ENTER_OPST     112
+				#define ENTER_PST      120
+				#define ENTER_PROC     128
+				#define ENTER_SCRATCH  136
+#else
+				#define ENTER_FRAME    80
+				#define ENTER_OPST     32
+				#define ENTER_PST      40
+				#define ENTER_PROC     48
+				#define ENTER_SCRATCH  56
+#endif
+				emit( PPC_MFLR( R0 ) );
+				emit( PPC_STDU( SP, -ENTER_FRAME, SP ) );		// create local frame
+				emit( PPC_STD( R0, ENTER_FRAME + 16, SP ) );	// save LR in caller's frame
+				emit( PPC_STD( rOPSTACK, ENTER_OPST, SP ) );
+				emit( PPC_STW( rPSTACK, ENTER_PST, SP ) );
+				emit( PPC_STD( rPROCBASE, ENTER_PROC, SP ) );
+
+				// Subtract frame size from programStack
+				if ( (int16_t)ci->value == ci->value ) {
+					emit( PPC_ADDI( rPSTACK, rPSTACK, -ci->value ) );
+				} else {
+					rx[0] = alloc_rx_const( R11, ci->value );	// r11 = arg
+					emit( PPC_SUB( rPSTACK, rPSTACK, rx[0] ) );
+					unmask_rx( rx[0] );
+				}
+
+				emit_CheckProc( vm, ci );
+
+				saveBranchOffsets();
+
+				// procBase = dataBase + programStack
+				emit( PPC_ADD( rPROCBASE, rPSTACK, rDATABASE ) ); // procBase = pStack + dataBase
+				break;
+
+			case OP_LEAVE:
+				flush_opstack();
+				dec_opstack(); // opstack -= 4
+#ifdef DEBUG_VM
+				if ( opstack != 0 )
+					DROP( "opStack corrupted on OP_LEAVE" );
+#endif
+				if ( !ci->endp && proc_base >= 0 ) {
+					// jump to last OP_LEAVE in this function
+					if ( inst[ ip ].op == OP_PUSH && inst[ ip + 1 ].op == OP_LEAVE ) {
+						// next instruction is proc_end, fall through
+					} else {
+						emit( PPC_B( vm->instructionPointers[ proc_end ] - compiledOfs ) );
+					}
+					break;
+				}
+
+				// Restore saved state
+				emit( PPC_LD( rPROCBASE, ENTER_PROC, SP ) );
+				emit( PPC_LWZ( rPSTACK, ENTER_PST, SP ) );
+				emit( PPC_LD( rOPSTACK, ENTER_OPST, SP ) );
+				emit( PPC_LD( R0, ENTER_FRAME + 16, SP ) );  // restore LR
+				emit( PPC_MTLR( R0 ) );
+				emit( PPC_ADDI( SP, SP, ENTER_FRAME ) );     // destroy local frame
+				emit( PPC_BLR() );
+				break;
+
+			case OP_CALL:
+				// Load callnum from opstack
+				rx[0] = load_rx_opstack( R3 | FORCED ); // r3 = *opstack
+				flush_volatile();
+				// Adjust rOPSTACK so the helper stores return value at the right place.
+				// The helper stores the return value at rOPSTACK+4 (for syscalls).
+				// We want that to land at rOPSTACK + opstack (replacing the call number).
+				// So we adjust rOPSTACK by (opstack - 4) before calling, and restore after.
+				if ( opstack != 1 ) {
+					emit( PPC_ADDI( rOPSTACK, rOPSTACK, (opstack - 1) * sizeof( int32_t ) ) );
+					emitFuncOffset( vm, FUNC_CALL );
+					emit( PPC_ADDI( rOPSTACK, rOPSTACK, -(opstack - 1) * sizeof( int32_t ) ) );
+				} else {
+					emitFuncOffset( vm, FUNC_CALL );
+				}
+				unmask_rx( rx[0] );
+				// OP_CALL pops the call number but the return value takes its place,
+				// so the opstack level remains unchanged (same as aarch64).
+				break;
+
+			case OP_PUSH:
+				inc_opstack();			// opstack -= 4
+				if ( (ci + 1)->op == OP_LEAVE ) {
+					if ( jumpSizeChanged != 0 ) {
+						// repeat last pass to handle jump size expansion
+						if ( proc_base >= 0 ) {
+							compiledOfs = vm->instructionPointers[ proc_base ];
+							ip = proc_base;
+							init_opstack();
+							jumpSizeChanged = 0;
+							pass = PASS_EXPAND;
+							restoreBranchOffsets();
+							break;
+						}
+					}
+					proc_base = -1;
+				}
+				break;
+
+			case OP_POP:
+				dec_opstack_discard();	// opstack -= 4
+				break;
+
+			case OP_CONST:
+#ifdef CONST_OPTIMIZE
+				if ( ConstOptimize( vm, ci + 0, ci + 1 ) ) {
+					break;
+				}
+#endif
+				inc_opstack(); // opstack += 4
+				store_item_opstack( ci );
+				break;
+
+			case OP_LOCAL:
+				inc_opstack(); // opstack += 4
+				store_item_opstack( ci );
+				break;
+
+			case OP_JUMP:
+				// indirect jump: target = *opstack
+				rx[0] = load_rx_opstack( R3 | RCONST ); dec_opstack();	// r3 = *opstack; opstack -= 4
+				flush_opstack();
+				emit_CheckJump( vm, rx[0], proc_base, proc_len );		// check if r3 is within current proc
+				// Load target address from instructionPointers[R3]
+				// R11 = R3 << 3
+				emit( PPC_RLWINM( R11, rx[0], 3, 0, 28 ) ); // shift left 3, mask to 32-bit
+				emit( PPC_LDX( R11, rINSPOINTERS, R11 ) );
+				emit( PPC_MTCTR( R11 ) );
+				emit( PPC_BCTR() );
+				unmask_rx( rx[0] );
+				wipe_vars();
+				break;
+
+			// ---- Integer comparisons ----
+			case OP_EQ:
+			case OP_NE:
+			case OP_LTI:
+			case OP_LEI:
+			case OP_GTI:
+			case OP_GEI:
+			case OP_LTU:
+			case OP_LEU:
+			case OP_GTU:
+			case OP_GEU:
+				// pop two, compare, branch
+				rx[0] = load_rx_opstack( R4 | RCONST ); dec_opstack(); // r4 = *opstack; opstack -= 4
+				rx[1] = load_rx_opstack( R3 | RCONST ); dec_opstack(); // r3 = *opstack; opstack -= 4
+				flush_nonvolatile();
+				unmask_rx( rx[0] );
+				unmask_rx( rx[1] );
+				switch ( ci->op ) {
+					case OP_LTU:
+					case OP_LEU:
+					case OP_GTU:
+					case OP_GEU:
+						emit( PPC_CMPLW( 0, rx[1], rx[0] ) ); break;
+					default:
+						emit( PPC_CMPW( 0, rx[1], rx[0] ) ); break;
+				}
+				emit_branchConditionalShort( vm, ci );
+				break;
+
+			// ---- Float comparisons ----
+			case OP_EQF:
+			case OP_NEF:
+			case OP_LTF:
+			case OP_LEF:
+			case OP_GTF:
+			case OP_GEF:
+				// pop two floats from opstack, compare, branch
+				// Load as 32-bit words into FPRs via memory
+				// We use lfs which loads a single-precision float and converts to double in the FPR
+				// opstack values are stored as 32-bit IEEE 754 floats
+				sx[1] = load_sx_opstack( F1 | RCONST ); dec_opstack(); // F1 = *opstack; opstack -= 4
+				sx[0] = load_sx_opstack( F0 | RCONST ); dec_opstack(); // F0 = *opstack; opstack -= 4
+				flush_nonvolatile();
+				emit( PPC_FCMPU( 0, sx[0], sx[1] ) );
+				// IEEE unordered (NaN) handling: FCMPU sets only CR0[SO] when an
+				// operand is NaN, leaving LT/GT/EQ clear. For <= / >= the single-bit
+				// condition from get_branch_cond would then wrongly take the branch,
+				// so fold the unordered bit into the tested bit: a NaN operand must
+				// NOT branch (matching the interpreter and aarch64). The other float
+				// compares (eq,ne,lt,gt) are already correct under NaN.
+				if ( ci->op == OP_LEF )
+					emit( PPC_CROR( BI_GT, BI_GT, BI_SO ) ); // GT |= unordered
+				else if ( ci->op == OP_GEF )
+					emit( PPC_CROR( BI_LT, BI_LT, BI_SO ) ); // LT |= unordered
+				emit_branchConditionalShort( vm, ci );
+				unmask_sx( sx[1] );
+				unmask_sx( sx[0] );
+				break;
+
+			// ---- Load operations ----
+			case OP_LOAD1:
+			case OP_LOAD2:
+			case OP_LOAD4:
+#ifdef FPU_OPTIMIZE
+				if ( ci->fpu && ci->op == OP_LOAD4 ) {
+					// fpu-optimized path
+					if ( addr_on_top( &var, rDATABASE, rPROCBASE ) ) {
+						// address specified by CONST/LOCAL
+						discard_top();
+						var.size = 4;
+						if ( find_sx_var( &sx[0], &var ) ) {
+							// already cached in some register
+							mask_sx( sx[0] );
+						} else {
+							// not cached, perform load
+							sx[0] = alloc_sx( F0 );
+							if ( var.addr == (int16_t)var.addr ) {
+								// short offset
+								emit( PPC_LFS( sx[0], var.addr, var.base ) );	// F0 = varBase[var.addr]
+							} else {
+								// long offset
+								rx[0] = alloc_rx_const( R4, var.addr );			// R4 = var.addr
+								emit( PPC_LFSX( sx[0], rx[0], var.base ) );		// F0 = var.base[R4]
+								unmask_rx( rx[0] );
+							}
+							set_sx_var( sx[0], &var );				// update metadata
+						}
+						store_sx_opstack( sx[0] );					// *opStack = F0
+					} else {
+						// address specified by a register
+						rx[0] = load_rx_opstack( R4 );					// R4 = *opStack
+						emit_CheckReg( vm, rx[0], ip );					// R4 &= dataMask
+						sx[0] = alloc_sx( F0 );
+						emit( PPC_LFSX( sx[0], rx[0], rDATABASE ) );	// F0 = dataBase[R4]
+						store_sx_opstack( sx[0] );						// *opStack = F0
+						unmask_rx( rx[0] );
+					}
+					break;
+				}
+#endif // FPU_OPTIMIZE
+				if ( addr_on_top( &var, rDATABASE, rPROCBASE ) ) {
+					// address specified by CONST/LOCAL thus no validation needed
+					reg_t *reg;
+					discard_top();
+					switch ( ci->op ) {
+						case OP_LOAD1: var.size = 1; break;
+						case OP_LOAD2: var.size = 2; break;
+						default:       var.size = 4; break;
+					}
+					if ( (reg = find_rx_var( &rx[0], &var )) != NULL ) {
+						// already cached in some register
+						if ( ci->op == OP_LOAD4 ) {
+							reg->ext = Z_NONE;
+							mask_rx( rx[0] );
+						} else {
+							const ext_t need = ( ci->op == OP_LOAD1 ) ? Z_EXT8 : Z_EXT16;
+							const int   bits = ( ci->op == OP_LOAD1 ) ? 56 : 48;
+							if ( reg->ext == need ) {
+								// already zero-extended to the requested width
+								mask_rx( rx[0] );
+							} else if ( search_opstack( TYPE_RX, rx[0] ) ) {
+								// the cached register is still a live value elsewhere
+								// on the opStack (e.g. a wider constant reused across
+								// stores of different sizes). Zero-extend a *copy* so
+								// the in-place reduction can't clobber that value -
+								// mirrors the clone-on-alias guard in finish_rx().
+								rx[1] = split_rx( rx[0] );
+								emit( PPC_CLRLDI( rx[1], rx[0], bits ) ); // (unsigned) zero-extend copy
+								set_rx_ext( rx[1], need );
+								rx[0] = rx[1]; // remap rx[0] to the copy
+							} else {
+								// sole owner: zero-extend in place and update the cache
+								emit( PPC_CLRLDI( rx[0], rx[0], bits ) ); // RX = (unsigned) RX
+								reduce_map_size( reg, ( ci->op == OP_LOAD1 ) ? 1 : 2 );
+								mask_rx( rx[0] );
+							}
+						}
+					} else {
+						// not found in vars, perform load
+						rx[0] = alloc_rx( R3 );	// allocate target register
+						if ( var.addr == (int16_t)var.addr ) {
+							// short offset
+							switch ( ci->op ) {
+								case OP_LOAD1: emit( PPC_LBZ( rx[0], var.addr, var.base ) ); var.size = 1; set_rx_ext( rx[0], Z_EXT8 ); break;  // R3 = (unsigned byte)var.base[var.addr]
+								case OP_LOAD2: emit( PPC_LHZ( rx[0], var.addr, var.base ) ); var.size = 2; set_rx_ext( rx[0], Z_EXT16 ); break; // R3 = (unsigned short)var.base[var.addr]
+								case OP_LOAD4: emit( PPC_LWZ( rx[0], var.addr, var.base ) ); var.size = 4; set_rx_ext( rx[0], Z_NONE ); break;  // R3 = (dword)var.base[var.addr]
+							}
+						} else {
+							// long offset, use indexed form
+							rx[1] = alloc_rx_const( R4, var.addr ); // R4 = var.addr
+							switch ( ci->op ) {
+								case OP_LOAD1: emit( PPC_LBZX( rx[0], rx[1], var.base ) ); var.size = 1; set_rx_ext( rx[0], Z_EXT8 ); break;	// R3 = var.base[R4] (byte)
+								case OP_LOAD2: emit( PPC_LHZX( rx[0], rx[1], var.base ) ); var.size = 2; set_rx_ext( rx[0], Z_EXT16 ); break;	// R3 = var.base[R4] (halfword)
+								case OP_LOAD4: emit( PPC_LWZX( rx[0], rx[1], var.base ) ); var.size = 4; set_rx_ext( rx[0], Z_NONE ); break;	// R3 = var.base[R4] (word)
+							}
+							unmask_rx( rx[1] );
+						}
+						set_rx_var( rx[0], &var ); // update metadata for destination register
+					}
+				} else {
+					// address specified by a register
+					// emit_CheckReg masks the address in place, so allocate
+					// the address into a writable register (no RCONST) and
+					// reuse it as the load destination.
+					rx[0] = rx[1] = load_rx_opstack( R3 );		// target = address = *opStack
+					emit_CheckReg( vm, rx[1], ip );				// R3 &= dataMask
+					switch ( ci->op ) {
+						case OP_LOAD1: emit( PPC_LBZX( rx[0], rx[1], rDATABASE ) ); set_rx_ext( rx[0], Z_EXT8 ); break;		// R3 = dataBase[R4] (byte)
+						case OP_LOAD2: emit( PPC_LHZX( rx[0], rx[1], rDATABASE ) ); set_rx_ext( rx[0], Z_EXT16 ); break;	// R3 = dataBase[R4] (halfword)
+						case OP_LOAD4: emit( PPC_LWZX( rx[0], rx[1], rDATABASE ) ); set_rx_ext( rx[0], Z_NONE ); break;		// R3 = dataBase[R4] (word)
+					}
+					if ( rx[1] != rx[0] ) {
+						unmask_rx( rx[1] );
+					}
+				}
+				store_rx_opstack( rx[0] ); // *opStack = R3
+				break;
+
+			case OP_STORE1:
+			case OP_STORE2:
+			case OP_STORE4:
+#ifdef FPU_OPTIMIZE
+				if ( scalar_on_top() && ci->op == OP_STORE4 ) {
+					// fpu-optimized path
+					sx[0] = load_sx_opstack( F0 | RCONST ); dec_opstack();	// F0 = *opStack; opStack -= 4
+					if ( addr_on_top( &var, rDATABASE, rPROCBASE ) ) {
+						// address specified by CONST/LOCAL
+						discard_top(); dec_opstack();
+						var.size = 4;
+						if ( var.addr == (int16_t)var.addr ) {
+							// short offset
+							emit( PPC_STFS( sx[0], var.addr, var.base ) );	// var.base[var.addr] = F0
+						} else {
+							// long offset
+							rx[0] = alloc_rx_const( R4, var.addr );			// R4 = var.addr
+							emit( PPC_STFSX( sx[0], rx[0], var.base ) );	// var.base[R4] = F0
+							unmask_rx( rx[0] );
+						}
+						wipe_var_range( &var );		// clear mappings for affected area
+						set_sx_var( sx[0], &var );	// update metadata
+					} else {
+						// address specified by register
+						rx[0] = load_rx_opstack( R4 );							// R4 = *opStack
+						dec_opstack();											// opStack -= 4
+						emit_CheckReg( vm, rx[0], ip );							// R4 &= dataMask
+						emit( PPC_STFSX( sx[0], rx[0], rDATABASE ) );			// dataBase[R4] = F0
+						unmask_rx( rx[0] );
+						wipe_vars(); // unknown/dynamic address, wipe all register mappings
+					}
+					unmask_sx( sx[0] );
+					break;
+				}
+#endif // FPU_OPTIMIZE
+				rx[0] = load_rx_opstack( R3 | RCONST ); dec_opstack(); // R3 = *opStack; opStack -= 4
+				if ( addr_on_top( &var, rDATABASE, rPROCBASE ) ) {
+					// address specified by CONST/LOCAL
+					discard_top(); dec_opstack();
+					if ( var.addr == (int16_t)var.addr ) {
+						//short offset
+						switch ( ci->op ) {
+							case OP_STORE1: emit( PPC_STB( rx[0], var.addr, var.base ) ); var.size = 1; break; // (byte) var.base[var.addr] = R3
+							case OP_STORE2: emit( PPC_STH( rx[0], var.addr, var.base ) ); var.size = 2; break; // (short) var.base[var.addr] = R3
+							default:        emit( PPC_STW( rx[0], var.addr, var.base ) ); var.size = 4; break; // (word) var.base[var.addr] = R3
+						}
+					} else {
+						// long offset
+						rx[1] = alloc_rx_const( R4, var.addr );	// R4 = var.addr
+						switch ( ci->op ) {
+							case OP_STORE1: emit( PPC_STBX( rx[0], rx[1], var.base ) ); var.size = 1; break; // (byte) var.base[R4] = R3
+							case OP_STORE2: emit( PPC_STHX( rx[0], rx[1], var.base ) ); var.size = 2; break; // (short) var.base[R4] = R3
+							default:        emit( PPC_STWX( rx[0], rx[1], var.base ) ); var.size = 4; break; // (word) var.base[R4] = R3
+						}
+						unmask_rx( rx[1] );
+					}
+					wipe_var_range( &var );		// erase mappings for written memory area
+					set_rx_var( rx[0], &var );	// update metadata for memory
+				} else {
+					// address specified by register
+					rx[1] = load_rx_opstack( R4 );							// R4 = *opStack
+					dec_opstack();											// opStack -= 4
+					emit_CheckReg( vm, rx[1], ip );							// R4 &= dataMask
+					switch ( ci->op ) {
+						case OP_STORE1: emit( PPC_STBX( rx[0], rx[1], rDATABASE ) ); break; // (byte) dataBase[R4] = R3
+						case OP_STORE2: emit( PPC_STHX( rx[0], rx[1], rDATABASE ) ); break; // (short) dataBase[R4] = R3
+						default:        emit( PPC_STWX( rx[0], rx[1], rDATABASE ) ); break; // (word) dataBase[R4] = R3
+					}
+					wipe_vars(); // unknown/dynamic address, wipe all register mappings
+					unmask_rx( rx[1] );
+				}
+				unmask_rx( rx[0] );
+				break;
+
+			case OP_ARG:
+				// Store opstack top to procBase + ci->value
+				var.base = rPROCBASE;
+				var.addr = ci->value;
+				var.size = 4;
+				wipe_var_range( &var );
+				if ( scalar_on_top() ) {
+					sx[0] = load_sx_opstack( F0 | RCONST ); dec_opstack(); // f0 = *opstack; opstack -=4
+					emit( PPC_STFS( sx[0], var.addr, var.base ) );
+					unmask_sx( sx[0] );
+				} else {
+					rx[0] = load_rx_opstack( R3 | RCONST ); dec_opstack(); // r3 = *opstack; opstack -=4
+					emit( PPC_STW( rx[0], var.addr, var.base ) ); // [procBase + v] = r3
+					unmask_rx( rx[0] );
+				}
+				break;
+
+			case OP_BLOCK_COPY:
+				// R3 = src (second), R4 = dst (top), R5 = count (immediate)
+				// Actually: *(second) <- *(top), count = ci->value
+				// Wait — let me check the semantics:
+				// OP_BLOCK_COPY: src = stack[top], dst = stack[top-1], count = ci->value
+				// Actually from vm_interpreted2.c: src = opStack[opStackOfs], dst = opStack[opStackOfs-1]
+				// i.e., top = src addr, second = dst addr
+				rx[0] = load_rx_opstack( R3 | FORCED ); dec_opstack();	// src: r3 = *opstack; opstack -=4
+				rx[1] = load_rx_opstack( R4 | FORCED ); dec_opstack();	// dst: r4 = *opstack; opstack -=4
+				rx[2] = alloc_rx( R5 | FORCED );						// flush and reserve r5 register
+				mov_rx_imm32( rx[2], ci->value );						// mov r5, 0x12345678
+				flush_items( TYPE_RX, R6 );
+				wipe_rx_meta( R6 );
+				emitFuncOffset( vm, FUNC_BCPY );
+				unmask_rx( rx[2] );
+				unmask_rx( rx[1] );
+				unmask_rx( rx[0] );
+				wipe_vars();
+				break;
+
+			// ---- Sign extension ----
+			case OP_SEX8:
+			case OP_SEX16:
+			case OP_NEGI:
+			case OP_BCOM:
+				rx[0] = load_rx_opstack( R3 );	// r3 = *opstack
+				switch ( ci->op ) {
+					case OP_SEX8:  emit( PPC_EXTSB( rx[0], rx[0] ) ); break;
+					case OP_SEX16: emit( PPC_EXTSH( rx[0], rx[0] ) ); break;
+					case OP_NEGI:  emit( PPC_NEG( rx[0], rx[0] ) ); break;
+					case OP_BCOM:  emit( PPC_NOT( rx[0], rx[0] ) ); break;
+				}
+				store_rx_opstack( rx[0] );		// *opstack = r3
+				break;
+
+			case OP_ADD:
+			case OP_SUB:
+			case OP_MULI:
+			case OP_MULU:
+			case OP_DIVI:
+			case OP_DIVU:
+			case OP_BAND:
+			case OP_BOR:
+			case OP_BXOR:
+			case OP_LSH:
+			case OP_RSHI:
+			case OP_RSHU:
+			case OP_MODI:
+			case OP_MODU:
+				// rx[0] = rx[1] = load_rx_opstack( R3 ); dec_opstack(); // source, target = *opstack
+				load_rx_opstack2( &rx[0], R3, &rx[1], R4 ); dec_opstack();
+				rx[2] = load_rx_opstack( R5 | RCONST ); // opstack -=4 ; r2 = *opstack
+				switch ( ci->op ) {
+					case OP_ADD:  emit( PPC_ADD( rx[0], rx[2], rx[1] ) ); break;
+					case OP_SUB:  emit( PPC_SUB( rx[0], rx[2], rx[1] ) ); break;
+					case OP_MULI: // emit( PPC_MULLW( rx[0], rx[2], rx[1] ) ); break;
+					case OP_MULU: emit( PPC_MULLW( rx[0], rx[2], rx[1] ) ); break; // unsigned multiply - same instruction for low word
+					case OP_DIVI: emit( PPC_DIVW( rx[0], rx[2], rx[1] ) ); break;
+					case OP_DIVU: emit( PPC_DIVWU( rx[0], rx[2], rx[1] ) ); break;
+					case OP_BAND: emit( PPC_AND( rx[0], rx[2], rx[1] ) ); break;
+					case OP_BOR:  emit( PPC_OR( rx[0], rx[2], rx[1] ) ); break;
+					case OP_BXOR: emit( PPC_XOR( rx[0], rx[2], rx[1] ) ); break;
+					case OP_LSH:  emit( PPC_SLW( rx[0], rx[2], rx[1] ) ); break;
+					case OP_RSHI: emit( PPC_SRAW( rx[0], rx[2], rx[1] ) ); break;
+					case OP_RSHU: emit( PPC_SRW( rx[0], rx[2], rx[1] ) ); break;
+					case OP_MODI: {
+						rx[3] = alloc_rx( R6 | TEMP );
+#if USE_ISA_3_0
+						emit( PPC_MODSW( rx[0], rx[2], rx[1] ) );	// R3 = a % b (single instruction)
+#else
+						emit( PPC_DIVW( rx[3], rx[2], rx[1] ) );	// R6 = a / b (signed)
+						emit( PPC_MULLW( rx[3], rx[3], rx[1] ) );	// R6 = (a/b) * b
+						emit( PPC_SUB( rx[0], rx[2], rx[3] ) );		// R3 = a - (a/b)*b
+#endif
+						unmask_rx( rx[3] );
+						break;
+					}
+					case OP_MODU: {
+						rx[3] = alloc_rx( R6 | TEMP );
+#if USE_ISA_3_0
+						emit( PPC_MODUW( rx[0], rx[2], rx[1] ) );	// R3 = a % b (single instruction)
+#else
+						emit( PPC_DIVWU( rx[3], rx[2], rx[1] ) );	// R6 = a / b (signed)
+						emit( PPC_MULLW( rx[3], rx[3], rx[1] ) );	// R6 = (a/b) * b
+						emit( PPC_SUB( rx[0], rx[2], rx[3] ) );		// R3 = a - (a/b)*b
+#endif
+						unmask_rx( rx[3] );
+						break;
+					}
+				} // switch (ci->op)
+				unmask_rx( rx[2] );
+				if ( rx[1] != rx[0] ) {
+					unmask_rx( rx[1] );
+				}
+				store_rx_opstack( rx[0] ); // *opstack = r3
+				break;
+
+			// ---- Float arithmetic ----
+			case OP_NEGF:
+				//sx[1] = sx[0] = load_sx_opstack( F0 );	// F0 = F1 = *opstack
+				load_sx_opstack2( &sx[0], F0, &sx[1], F1 );
+				emit( PPC_FNEG( sx[0], sx[1] ) );			// F0 = -F1
+				if ( sx[1] != sx[0] ) {
+					unmask_sx( sx[1] );
+				}
+				store_sx_opstack( sx[0] );					// *opStack = F0
+				break;
+
+			case OP_ADDF:
+			case OP_SUBF:
+			case OP_MULF:
+			case OP_DIVF:
+				//sx[0] = sx[1] = load_sx_opstack( F0 ); dec_opstack();	// F0 = F1 = *opstack
+				load_sx_opstack2( &sx[0], F0, &sx[1], F1 ); dec_opstack();
+				sx[2] = load_sx_opstack( F2 | RCONST );	// opstack -= 4; F2 = *opstack
+				switch ( ci->op ) {
+					case OP_ADDF: emit( PPC_FADDS( sx[0], sx[2], sx[1] ) ); break;
+					case OP_SUBF: emit( PPC_FSUBS( sx[0], sx[2], sx[1] ) ); break;
+					case OP_MULF: emit( PPC_FMULS( sx[0], sx[2], sx[1] ) ); break;
+					case OP_DIVF: emit( PPC_FDIVS( sx[0], sx[2], sx[1] ) ); break;
+				}
+				if ( sx[1] != sx[0] ) {
+					unmask_sx( sx[1] );
+				}
+				unmask_sx( sx[2] );
+				store_sx_opstack( sx[0] ); // *opStack = F0
+				break;
+
+			// ---- Type conversion ----
+			case OP_CVIF:
+				// Convert integer to float
+				sx[0] = alloc_sx( F0 );	// f0 - destination register
+				rx[0] = load_rx_opstack( R3 | RCONST );			// r3 = *opstack
+#if USE_ISA_2_07
+				// ISA 2.07 (POWER8): use mtvsrwa to move GPR directly to VSR,
+				// avoiding the memory round-trip through the stack scratch area.
+				// mtvsrwa sign-extends the 32-bit GPR value to 64-bit in the VSR.
+				emit( PPC_MTVSRWA( sx[0], rx[0]) );     // F0(VSR) = sign-extend(R3)
+				emit( PPC_FCFIDS( sx[0], sx[0] ) );     // F0 = convert int64 -> float
+#else
+				rx[1] = alloc_rx( R4 | TEMP );
+				emit( PPC_EXTSW( rx[1], rx[0] ) );				// sign-extend (r3) to 64-bit (r4)
+				emit( PPC_STD( rx[1], ENTER_SCRATCH, SP ) );	// store int64 (r4) to stack scratch
+				emit( PPC_LFD( sx[0], ENTER_SCRATCH, SP ) );	// load as double (reinterpret int64 bits)
+				emit( PPC_FCFIDS( sx[0], sx[0] ) );				// convert int64 -> float single
+				unmask_rx( rx[1] );
+#endif
+				unmask_rx( rx[0] );
+				store_sx_opstack( sx[0] );						// *opstack = f0
+				break;
+
+			case OP_CVFI:
+				rx[0] = alloc_rx( R3 );
+				sx[0] = load_sx_opstack( F0 | RCONST );		// f0 = *opstack
+#if USE_ISA_2_07
+				// ISA 2.07 (POWER8): use xscvdpsxws + mfvsrwz to avoid memory round-trip.
+				// This also eliminates the BE/LE offset difference since there is no
+				// intermediate memory store.
+				sx[1] = alloc_sx( F1 | TEMP );				// f0 = *opstack
+				unmask_sx( sx[1] );
+				emit( PPC_XSCVDPSXWS( sx[1], sx[0] ) );     // convert double -> signed int32 in VSR
+				emit( PPC_MFVSRWZ( rx[0], sx[1] ) );		// move low 32 bits of VSR -> GPR
+#else  // !USE_ISA_2_07
+				// Fallback: memory round-trip via stack scratch area
+				sx[1] = alloc_sx( F1 | TEMP );		 			// allocate scratch
+				emit( PPC_FCTIWZ( sx[1], sx[0] ) );             // convert to int32 (in FPR)
+				emit( PPC_STFD( sx[1], ENTER_SCRATCH, SP ) );	// store doubleword to scratch
+				// fctiwz places the 32-bit int in the low-order word of the doubleword.
+				// On little-endian, the low-order word is at the base address (offset+0).
+				// On big-endian, the low-order word is at offset+4.
+				unmask_sx( sx[1] );
+#ifdef PPC64_ELFv1
+				emit( PPC_LWZ( rx[0], ENTER_SCRATCH + 4, SP ) );	// load int32 (BE: offset+4)
+#else
+				emit( PPC_LWZ( rx[0], ENTER_SCRATCH, SP ) );		// load int32 (LE: offset+0)
+#endif
+#endif // !USE_ISA_2_07
+				unmask_sx( sx[0] );
+				store_rx_opstack( rx[0] );							// *opstack = r3
+				break;
+
+			default:
+				Com_Error( ERR_DROP, "VM: bad opcode %02x at instruction %i", ci->op, ip - 1 );
+				break;
+
+		} // switch ( ci->op )
+	} // while ip
+
+	flush_opstack();
+
+	if ( jumpSizeChanged != 0 ) {
+		// in case if there were no proc/leave
+		pass = PASS_EXPAND;
+		goto __recompile;
+	}
+
+#ifdef FUNC_ALIGN
+	emitAlign( FUNC_ALIGN );
+#endif
+
+	// Emit helper functions
+	emitCallFunc( vm );
+
+#ifdef FUNC_ALIGN
+	emitAlign( FUNC_ALIGN );
+#endif
+
+	funcOffset[ FUNC_BCPY ] = compiledOfs;
+	emitBlockCopyFunc( vm );
+
+	funcOffset[ FUNC_BADJ ] = compiledOfs;
+	emitFuncEntry( BadJump );
+
+	funcOffset[ FUNC_OUTJ ] = compiledOfs;
+	emitFuncEntry( OutJump );
+
+	funcOffset[ FUNC_OSOF ] = compiledOfs;
+	emitFuncEntry( ErrBadOpStack );
+
+	funcOffset[ FUNC_PSOF ] = compiledOfs;
+	emitFuncEntry( ErrBadProgramStack );
+
+#ifndef NDEBUG
+	funcOffset[ FUNC_HIBITSET ] = compiledOfs;
+	emitFuncEntry( ErrHighBitsSet );
+#endif
+
+	} // pass
+
+	if ( vm->codeBase.ptr == NULL ) {
+		uint32_t allocSize = compiledOfs;
+
+		vm->codeBase.ptr = mmap( NULL, allocSize, PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0 );
+		if ( vm->codeBase.ptr == MAP_FAILED ) {
+			VM_FreeBuffers();
+			Com_Printf( S_COLOR_WARNING "%s(%s): mmap failed\n", __func__, vm->name );
+			return qfalse;
+		}
+
+		vm->codeLength = allocSize;
+		vm->codeSize = compiledOfs;
+		code = (uint32_t*)vm->codeBase.ptr;
+		pass = NUM_PASSES - 1;  // repeat last pass
+		goto __recompile;
+	}
+
+	// Offset all instruction pointers for the final code location
+	for ( i = 0; i < header->instructionCount; i++ ) {
+		if ( !inst[i].jused ) {
+			vm->instructionPointers[ i ] = (intptr_t)BadJump;
+			continue;
+		}
+		vm->instructionPointers[ i ] += (intptr_t)vm->codeBase.ptr;
+	}
+
+	VM_FreeBuffers();
+
+	if ( mprotect( vm->codeBase.ptr, vm->codeLength, PROT_READ | PROT_EXEC ) ) {
+		VM_Destroy_Compiled( vm );
+		Com_Printf( S_COLOR_WARNING "%s(%s): mprotect failed\n", __func__, vm->name );
+		return qfalse;
+	}
+
+	// Synchronize instruction cache
+	__builtin___clear_cache( vm->codeBase.ptr, vm->codeBase.ptr + vm->codeLength );
+
+	vm->destroy = VM_Destroy_Compiled;
+
+	Com_Printf( "VM file %s compiled to %i bytes of code (dataMask=0x%x stackBottom=%d programStack=%d)\n",
+		vm->name, vm->codeLength, vm->dataMask, vm->stackBottom, vm->programStack );
+
+	return qtrue;
+}
+
+
+// =========================================================================
+// VM_CallCompiled
+// =========================================================================
+
+int32_t VM_CallCompiled( vm_t *vm, int nargs, int32_t *args )
+{
+	int32_t		opStack[ MAX_OPSTACK_SIZE ];
+	int32_t		stackOnEntry;
+	int32_t		*image;
+	int			i;
+
+	// we might be called recursively, so this might not be the very top
+	stackOnEntry = vm->programStack;
+
+	vm->programStack -= ( MAX_VMMAIN_CALL_ARGS + 2 ) * sizeof( int32_t );
+
+	// set up the stack frame
+	image = (int32_t*)( vm->dataBase + vm->programStack );
+	for ( i = 0; i < nargs; i++ ) {
+		image[ i + 2 ] = args[ i ];
+	}
+
+#ifdef DEBUG_VM
+	opStack[0] = 0xDEADC0DE;
+#endif
+	opStack[1] = 0;
+
+	vm->opStack = opStack;
+	vm->opStackTop = opStack + ARRAY_LEN( opStack ) - 1;
+
+#ifdef PPC64_ELFv1
+	// ELFv1: vm->codeBase.ptr is raw code, not a function descriptor.
+	// Use inline asm to branch directly to JIT code, bypassing the
+	// ELFv1 function descriptor mechanism which expects a descriptor
+	// at the target address rather than raw code.
+	{
+		register void *entry = vm->codeBase.ptr;
+		__asm__ __volatile__ (
+			"std  2, 40(1)\n\t"  // save TOC (R2) to standard TOC save slot
+			"mtctr %0\n\t"       // load JIT entry into CTR
+			"bctrl\n\t"          // branch to JIT code
+			"ld   2, 40(1)\n\t"  // restore TOC after return
+			:
+			: "r" (entry)
+			: "ctr", "lr", "cr0", "cr1", "cr5", "cr6", "cr7",
+			  "r0", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
+			  "fr0", "fr1", "fr2", "fr3", "fr4", "fr5", "fr6", "fr7",
+			  "fr8", "fr9", "fr10", "fr11", "fr12", "fr13",
+			  "memory"
+		);
+	}
+#else
+	vm->codeBase.func(); // go into generated code
+#endif
+
+#ifdef DEBUG_VM
+	if ( opStack[0] != 0xDEADC0DE ) {
+		Com_Error( ERR_DROP, "%s(%s): opStack corrupted in compiled code", __func__, vm->name );
+	}
+
+	if ( vm->programStack != (int32_t)( stackOnEntry - ( MAX_VMMAIN_CALL_ARGS + 2 ) * sizeof( int32_t ) ) ) {
+		Com_Error( ERR_DROP, "%s(%s): programStack corrupted in compiled code", __func__, vm->name );
+	}
+#endif
+
+	vm->programStack = stackOnEntry;
+
+	return opStack[1];
+}

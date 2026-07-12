@@ -718,6 +718,141 @@ static void SVC_Status( const netadr_t *from ) {
 
 /*
 ================
+SVC_Status_Defrag
+Responds with detailed server info: CS_SERVERINFO and the scoreboard.
+================
+*/
+static void SVC_StatusDefrag_NoFlush( const char *buffer ) {
+	// no-op: we read the buffer directly after Com_EndRedirect
+}
+
+static void SVC_StatusDefrag_ParseUIDs( const char *scoreOutput, int *uidMap, int maxClients ) {
+	const char *p = scoreOutput;
+	const char *numStart, *numEnd, *uidStart, *uidEnd;
+	int num, uid;
+	char tmp[32];
+
+	while ( ( p = strstr( p, "<player>" ) ) != NULL ) {
+		// find <num>X</num>
+		numStart = strstr( p, "<num>" );
+		if ( !numStart ) break;
+		numStart += 5;
+		numEnd = strstr( numStart, "</num>" );
+		if ( !numEnd || numEnd - numStart >= (int)sizeof(tmp) ) break;
+		Q_strncpyz( tmp, numStart, (int)(numEnd - numStart) + 1 );
+		num = atoi( tmp );
+
+		// find <uid>X</uid>
+		uidStart = strstr( p, "<uid>" );
+		if ( !uidStart ) break;
+		uidStart += 5;
+		uidEnd = strstr( uidStart, "</uid>" );
+		if ( !uidEnd || uidEnd - uidStart >= (int)sizeof(tmp) ) break;
+		Q_strncpyz( tmp, uidStart, (int)(uidEnd - uidStart) + 1 );
+		uid = atoi( tmp );
+
+		if ( num >= 0 && num < maxClients ) {
+			uidMap[num] = uid;
+		}
+
+		p = uidEnd + 6;
+	}
+}
+
+static void SVC_Status_Defrag( const netadr_t *from ) {
+	char	player[MAX_NAME_LENGTH + 64]; // score + ping + name
+	char	status[MAX_PACKETLEN];
+	char	*s;
+	int	i;
+	client_t	*cl;
+	playerState_t	*ps;
+	int		statusLength;
+	int		playerLength;
+	char	tld[3];
+	char	infostring[MAX_INFO_STRING+160]; // add some space for challenge string
+	char		scoreBuffer[4096];
+	char		model_str[MAX_INFO_VALUE];
+	char		headmodel_str[MAX_INFO_VALUE];
+	char		color1_str[MAX_INFO_VALUE];
+	int		uidMap[MAX_CLIENTS];
+
+	// ignore if we are in single player
+#ifndef DEDICATED
+	if ( Cvar_VariableIntegerValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableIntegerValue("ui_singlePlayerActive")) {
+		return;
+	}
+#endif
+
+	// Prevent using getdfstatus as an amplifier
+	if ( SVC_RateLimitAddress( from, 10, 1000 ) ) {
+		if ( com_developer->integer ) {
+			Com_Printf( "SVC_Status_Defrag: rate limit from %s exceeded, dropping request\n",
+				NET_AdrToString( from ) );
+		}
+		return;
+	}
+
+	// Allow getstatus to be DoSed relatively easily, but prevent
+	// excess outbound bandwidth usage when being flooded inbound
+	if ( SVC_RateLimit( &outboundRateLimit, 10, 100 ) ) {
+		Com_DPrintf( "SVC_Status_Defrag: rate limit exceeded, dropping request\n" );
+		return;
+	}
+
+	// A maximum challenge length of 128 should be more than plenty.
+	if ( strlen( Cmd_Argv( 1 ) ) > 128 )
+		return;
+
+	// get mDd UIDs by internally executing the mod's "score" command
+	memset( uidMap, 0, sizeof( uidMap ) );
+	Com_BeginRedirect( scoreBuffer, sizeof( scoreBuffer ), SVC_StatusDefrag_NoFlush );
+	Cbuf_ExecuteText( EXEC_NOW, "score\n" );
+	Com_EndRedirect();
+	SVC_StatusDefrag_ParseUIDs( scoreBuffer, uidMap, MAX_CLIENTS );
+
+	Q_strncpyz( infostring, Cvar_InfoString( CVAR_SERVERINFO, NULL ), sizeof( infostring ) );
+
+	// echo back the parameter to status. so master servers can use it as a challenge
+	// to prevent timed spoofed reply packets that add ghost servers
+	Info_SetValueForKey( infostring, "challenge", Cmd_Argv( 1 ) );
+
+	s = status;
+	status[0] = '\0';
+	statusLength = strlen( infostring ) + 16; // strlen( "statusResponse\n\n" )
+
+	for ( i = 0; i < sv.maxclients; i++ ) {
+		cl = &svs.clients[i];
+		if ( cl->state >= CS_CONNECTED ) {
+
+			ps = SV_GameClientNum( i );
+			int dfscore = atoi(Info_ValueForKey(sv.configstrings[CS_PLAYERS+i], "dfscore"));
+			int spectating = (i != ps->clientNum) ? ps->clientNum : -1;
+			Q_strncpyz( tld, Info_ValueForKey( cl->userinfo, "tld" ), sizeof( tld ) );
+
+			Q_strncpyz(model_str, (*Info_ValueForKey(cl->userinfo, "model") ? Info_ValueForKey(cl->userinfo, "model") : "sarge"), sizeof(model_str));
+			Q_strncpyz(headmodel_str, (*Info_ValueForKey(cl->userinfo, "headmodel") ? Info_ValueForKey(cl->userinfo, "headmodel") : "sarge"), sizeof(headmodel_str));
+			// color1: raw value (web derives nospec from "nospec"/"nospecpm")
+			Q_strncpyz( color1_str, Info_ValueForKey( cl->userinfo, "color1" ), sizeof( color1_str ) );
+
+			playerLength = Com_sprintf( player, sizeof( player ), "%i %i %i \"%s\" %i \"%s\" \"%s\" %i \"%s\" \"%s\"\n",
+				dfscore, cl->ping, i, cl->name, spectating, tld, color1_str, uidMap[i],
+				uidMap[i] > 0 ? model_str : "",
+				uidMap[i] > 0 ? headmodel_str : "" );
+
+			if ( statusLength + playerLength >= MAX_PACKETLEN-4 )
+				break; // can't hold any more
+
+			s = Q_stradd( s, player );
+			statusLength += playerLength;
+		}
+	}
+
+	NET_OutOfBandPrint( NS_SERVER, from, "statusResponse\n%s\n%s", infostring, status );
+}
+
+
+/*
+================
 SVC_Info
 
 Responds with a short info message that should be enough to determine
@@ -913,7 +1048,7 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 	if ( !memcmp( "connect ", msg->data + 4, 8 ) ) {
 		if ( msg->cursize > MAX_INFO_STRING*2 ) { // if we assume 200% compression ratio on userinfo
 			if ( com_developer->integer ) {
-				Com_Printf( "%s : connect packet is too long - %i\n", NET_AdrToString( from ), msg->cursize );
+				Com_Printf( S_COLOR_DEVEL "%s : connect packet is too long - %i\n", NET_AdrToString( from ), msg->cursize );
 			}
 			return;
 		}
@@ -940,6 +1075,8 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 
 	if (!Q_stricmp(c, "getstatus")) {
 		SVC_Status( from );
+	} else if (!Q_stricmp(c, "getdfstatus")) {
+		SVC_Status_Defrag( from );
 	} else if (!Q_stricmp(c, "getinfo")) {
 		SVC_Info( from );
 	} else if (!Q_stricmp(c, "getchallenge")) {
@@ -956,7 +1093,7 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		// sequenced messages to the old client
 	} else {
 		if ( com_developer->integer ) {
-			Com_Printf( "bad connectionless packet from %s:\n%s\n",
+			Com_Printf( S_COLOR_DEVEL "bad connectionless packet from %s:\n%s\n",
 				NET_AdrToString( from ), s );
 		}
 	}
@@ -1193,10 +1330,8 @@ int SV_FrameMsec( void )
 {
 	if ( sv_fps )
 	{
-		int frameMsec;
-		
-		frameMsec = 1000.0f / sv_fps->value;
-		
+		const int frameMsec = 1000 / sv_fps->integer;
+
 		if ( frameMsec < sv.timeResidual )
 			return 0;
 		else
@@ -1314,11 +1449,11 @@ void SV_Frame( int msec ) {
 
 	// if it isn't time for the next frame, do nothing
 
-	frameMsec = 1000 / sv_fps->integer * com_timescale->value;
+	frameMsec = (1000 / sv_fps->integer) * com_timescale->value;
 	// don't let it scale below 1ms
-	if(frameMsec < 1)
+	if (frameMsec < 1)
 	{
-		Cvar_Set( "timescale", va( "%f", sv_fps->value / 1000.0f ) );
+		Cvar_SetValue( "timescale", sv_fps->value / 1000.0f );
 		Com_DPrintf( "timescale adjusted to %f\n", com_timescale->value );
 		frameMsec = 1;
 	}

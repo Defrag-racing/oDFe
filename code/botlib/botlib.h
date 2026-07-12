@@ -36,7 +36,7 @@ struct aas_entityinfo_s;
 struct aas_areainfo_s;
 struct aas_altroutegoal_s;
 struct aas_predictroute_s;
-struct bot_consolemessage_s;
+struct bot_consolemessage_qvm_s;
 struct bot_match_s;
 struct bot_goal_s;
 struct bot_moveresult_s;
@@ -186,10 +186,10 @@ typedef struct botlib_import_s
 	//send a bot client command
 	void		(*BotClientCommand)( int client, const char *command );
 	//memory allocation
-	void		*(*GetMemory)(int size);		// allocate from Zone
+	void		*(*GetMemory)(size_t size);		// allocate from Zone
 	void		(*FreeMemory)(void *ptr);		// free memory from Zone
 	int			(*AvailableMemory)(void);		// available Zone memory
-	void		*(*HunkAlloc)(int size);		// allocate from hunk
+	void		*(*HunkAlloc)(size_t size);		// allocate from hunk
 	//file system access
 	int			(*FS_FOpenFile)( const char *qpath, fileHandle_t *file, fsMode_t mode );
 	int			(*FS_Read)( void *buffer, int len, fileHandle_t f );
@@ -318,7 +318,7 @@ typedef struct ai_export_s
 	void	(*BotFreeChatState)(int handle);
 	void	(*BotQueueConsoleMessage)(int chatstate, int type, const char *message);
 	void	(*BotRemoveConsoleMessage)(int chatstate, int handle);
-	int		(*BotNextConsoleMessage)(int chatstate, struct bot_consolemessage_s *cm);
+	int		(*BotNextConsoleMessage)(int chatstate, struct bot_consolemessage_qvm_s *cm);
 	int		(*BotNumConsoleMessages)(int chatstate);
 	void	(*BotInitialChat)(int chatstate, const char *type, int mcontext, const char *var0, const char *var1, const char *var2, const char *var3, const char *var4, const char *var5, const char *var6, const char *var7);
 	int		(*BotNumInitialChats)(int chatstate, const char *type);
@@ -485,7 +485,7 @@ name:						default:			module(s):			description:
 "rs_maxjumpfallheight"		"450"				be_aas_move.c
 
 "max_aaslinks"				"4096"				be_aas_sample.c		maximum links in the AAS
-"max_routingcache"			"4096"				be_aas_route.c		maximum routing cache size in KB
+"max_routingcache"			"12288"				be_aas_route.c		maximum routing cache size in KB
 "forceclustering"			"0"					be_aas_main.c		force recalculation of clusters
 "forcereachability"			"0"					be_aas_main.c		force recalculation of reachabilities
 "forcewrite"				"0"					be_aas_main.c		force writing of aas file
