@@ -442,6 +442,11 @@ static qboolean CL_GetValue( char* value, int valueSize, const char* key ) {
 		return qtrue;
 	}
 
+	if ( !Q_stricmp( key, "trap_Key_CapsLockOn_Q3E" ) ) {
+		Com_sprintf( value, valueSize, "%i", CG_KEY_CAPSLOCK_ON );
+		return qtrue;
+	}
+
 	return qfalse;
 }
 
@@ -563,6 +568,9 @@ static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		CM_TransformedBoxTrace( VMA(1), VMA(2), VMA(3), VMA(4), VMA(5), args[6], args[7], VMA(8), VMA(9), /*int capsule*/ qtrue );
 		return 0;
 	case CG_CM_MARKFRAGMENTS:
+		VM_CHECKBOUNDS3( cgvm, args[2], args[1], sizeof( vec3_t ) );
+		VM_CHECKBOUNDS3( cgvm, args[5], args[4], sizeof( vec3_t ) );
+		VM_CHECKBOUNDS3( cgvm, args[7], args[6], sizeof( markFragment_t ) );
 		return re.MarkFragments( args[1], VMA(2), VMA(3), args[4], VMA(5), args[6], VMA(7) );
 	case CG_S_STARTSOUND:
 		S_StartSound( VMA(1), args[2], args[3], args[4] );
@@ -789,6 +797,9 @@ static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 	case CG_CVAR_SETDESCRIPTION:
 		Cvar_SetDescription2( (const char*)VMA(1), (const char*)VMA(2) );
 		return 0;
+
+	case CG_KEY_CAPSLOCK_ON:
+		return Key_CapsLockOn();
 
 	case CG_TRAP_GETVALUE:
 		VM_CHECKBOUNDS( cgvm, args[1], args[2] );

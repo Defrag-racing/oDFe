@@ -191,7 +191,8 @@ typedef struct client_s {
 	qboolean		downloadEOF;		// We have sent the EOF block
 	int				downloadSendTime;	// time we last got an ack from the client
 
-	int				deltaMessage;		// frame last client usercmd message
+	qboolean		deltaActive;		// delta snapshots enabled
+	int				deltaStart;			// don't delta from messages earlier than this when CS_ACTIVE
 	int				lastPacketTime;		// svs.time when packet was last received
 	int				lastConnectTime;	// svs.time when connection started
 	int				lastDisconnectTime;

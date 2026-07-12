@@ -212,6 +212,8 @@ struct vm_s {
 	int			breakFunction;		// increment breakCount on function entry to this
 	int			breakCount;
 
+	int			syscallCount;		// syscall counter for current VM_Call invocation
+
 	int32_t		*jumpTableTargets;
 	int32_t		numJumpTableTargets;
 
@@ -249,9 +251,9 @@ typedef struct opcode_info_s
 	int	size;
 	int	stack;
 	int	nargs;
-	int	flags;
+	int	flags; // rhs type cast
 } opcode_info_t;
 
-extern opcode_info_t ops[ OP_MAX ];
+extern const opcode_info_t ops[ OP_MAX ];
 
 #endif // VM_LOCAL_H

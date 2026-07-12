@@ -155,19 +155,19 @@ static __attribute__ ((format (printf, 2, 3))) void QDECL BotImport_Print(int ty
 			break;
 		}
 		case PRT_WARNING: {
-			Com_Printf(S_COLOR_YELLOW "Warning: %s", str);
+			Com_Printf(S_COLOR_WARNING "Warning: %s", str);
 			break;
 		}
 		case PRT_ERROR: {
-			Com_Printf(S_COLOR_RED "Error: %s", str);
+			Com_Printf(S_COLOR_ERROR "Error: %s", str);
 			break;
 		}
 		case PRT_FATAL: {
-			Com_Printf(S_COLOR_RED "Fatal: %s", str);
+			Com_Printf(S_COLOR_ERROR "Fatal: %s", str);
 			break;
 		}
 		case PRT_EXIT: {
-			Com_Error(ERR_DROP, S_COLOR_RED "Exit: %s", str);
+			Com_Error(ERR_DROP, S_COLOR_ERROR "Exit: %s", str);
 			break;
 		}
 		default: {
@@ -210,6 +210,10 @@ BotImport_EntityTrace
 */
 static void BotImport_EntityTrace(bsp_trace_t *bsptrace, vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int entnum, int contentmask) {
 	trace_t trace;
+
+	if ( (unsigned)entnum > MAX_GENTITIES - 1 ) {
+		entnum = ENTITYNUM_NONE;
+	}
 
 	SV_ClipToEntity(&trace, start, mins, maxs, end, entnum, contentmask, qfalse);
 	//copy the trace information
@@ -290,7 +294,7 @@ static void BotImport_BSPModelMinsMaxsOrigin(int modelnum, vec3_t angles, vec3_t
 BotImport_GetMemory
 ==================
 */
-static void *BotImport_GetMemory(int size) {
+static void *BotImport_GetMemory(size_t size) {
 	void *ptr;
 
 	ptr = Z_TagMalloc( size, TAG_BOTLIB );
@@ -311,7 +315,7 @@ static void BotImport_FreeMemory(void *ptr) {
 BotImport_HunkAlloc
 =================
 */
-static void *BotImport_HunkAlloc( int size ) {
+static void *BotImport_HunkAlloc( size_t size ) {
 	if( Hunk_CheckMark() ) {
 		Com_Error( ERR_DROP, "%s(): Alloc with marks already set", __func__ );
 	}
@@ -468,7 +472,7 @@ int SV_BotLibSetup( void ) {
 	}
 
 	if ( !botlib_export ) {
-		Com_Printf( S_COLOR_RED "Error: SV_BotLibSetup without SV_BotInitBotLib\n" );
+		Com_Printf( S_COLOR_ERROR "Error: SV_BotLibSetup without SV_BotInitBotLib\n" );
 		return -1;
 	}
 
@@ -498,11 +502,12 @@ SV_BotInitCvars
 ==================
 */
 void SV_BotInitCvars(void) {
+	cvar_t *cv;
 
 	Cvar_Get("bot_enable", "0", 0);						//enable the bot
 	Cvar_Get("bot_developer", "0", CVAR_CHEAT);			//bot developer mode
 	Cvar_Get("bot_debug", "0", CVAR_CHEAT);				//enable bot debugging
-	Cvar_Get("bot_maxdebugpolys", "2", 0);				//maximum number of debug polys
+	cv = Cvar_Get("bot_maxdebugpolys", "2", 0);			//maximum number of debug polys
 	Cvar_Get("bot_groundonly", "1", 0);					//only show ground faces of areas
 	Cvar_Get("bot_reachability", "0", 0);				//show all reachabilities to other areas
 	Cvar_Get("bot_visualizejumppads", "0", CVAR_CHEAT);	//show jumppads
@@ -529,6 +534,8 @@ void SV_BotInitCvars(void) {
 	Cvar_Get("bot_interbreedbots", "10", CVAR_CHEAT);	//number of bots used for interbreeding
 	Cvar_Get("bot_interbreedcycle", "20", CVAR_CHEAT);	//bot interbreeding cycle
 	Cvar_Get("bot_interbreedwrite", "", CVAR_CHEAT);	//write interbreeded bots to this file
+
+	Cvar_CheckRange(cv, "0", "65536", CV_INTEGER);
 }
 
 /*

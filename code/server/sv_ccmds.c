@@ -339,6 +339,9 @@ static void SV_MapRestart_f( void ) {
 			continue;
 		}
 
+		// don't delta from pre-map_restart messages
+		client->deltaStart = client->netchan.outgoingSequence;
+
 		if ( client->netchan.remoteAddress.type == NA_BOT ) {
 			isBot = qtrue;
 		} else {
@@ -662,7 +665,7 @@ Load saved bans from file.
 */
 static void SV_RehashBans_f(void)
 {
-	int index, filelen;
+	int index, filelen, res;
 	fileHandle_t readfrom;
 	char *textbuf, *curpos, *maskpos, *newlinepos;
 	const char *endpos;
@@ -691,8 +694,13 @@ static void SV_RehashBans_f(void)
 
 		curpos = textbuf = Z_Malloc(filelen);
 
-		filelen = FS_Read(textbuf, filelen, readfrom);
+		res = FS_Read(textbuf, filelen, readfrom);
 		FS_FCloseFile(readfrom);
+
+		if (res != filelen) {
+			Z_Free(textbuf);
+			return;
+		}
 
 		endpos = textbuf + filelen;
 
