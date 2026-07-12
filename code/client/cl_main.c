@@ -39,6 +39,7 @@ cvar_t	*cl_timeout;
 cvar_t	*cl_autoNudge;
 cvar_t	*cl_timeNudge;
 cvar_t	*cl_showTimeDelta;
+cvar_t	*cl_localTime;
 
 cvar_t	*cl_shownet;
 cvar_t	*cl_autoRecordDemo;
@@ -729,7 +730,7 @@ void CL_ReadDemoMessage( void ) {
 		return;
 	}
 	buf.cursize = LittleLong( buf.cursize );
-	if ( buf.cursize == -1 ) {
+	if ( buf.cursize < 0 ) {
 		CL_DemoEnd();
 		return;
 	}
@@ -1227,7 +1228,7 @@ void CL_MapLoading( void ) {
 		Com_Memset( cls.updateInfoString, 0, sizeof( cls.updateInfoString ) );
 		Com_Memset( clc.serverMessage, 0, sizeof( clc.serverMessage ) );
 		Com_Memset( &cl.gameState, 0, sizeof( cl.gameState ) );
-		clc.lastPacketSentTime = cls.realtime - 9999;  // send packet immediately
+		clc.lastPacketSentTime = cls.realtime - RETRANSMIT_TIMEOUT; // send packet immediately
 		cls.framecount++;
 		SCR_UpdateScreen();
 	} else {
@@ -1239,7 +1240,7 @@ void CL_MapLoading( void ) {
 		Key_SetCatcher( 0 );
 		cls.framecount++;
 		SCR_UpdateScreen();
-		clc.connectTime = -RETRANSMIT_TIMEOUT;
+		clc.connectTime = cls.realtime - RECONNECT_TIMEOUT; // send packet immediately
 		NET_StringToAdr( cls.servername, &clc.serverAddress, NA_UNSPEC );
 		// we don't need a challenge on the localhost
 		CL_CheckForResend();
@@ -1707,6 +1708,17 @@ static void CL_Connect_f( void ) {
 	}
 
 	Q_strncpyz( buffer, server, sizeof( buffer ) );
+
+	len = strlen( buffer );
+	if ( len <= 0 ) {
+		return;
+	}
+
+	// some programs may add ending slash
+	if ( buffer[len - 1] == '/' ) {
+		buffer[len - 1] = '\0';
+	}
+
 	server = buffer;
 
 	// skip leading "defrag:/" in connection string
@@ -1719,17 +1731,7 @@ static void CL_Connect_f( void ) {
 		server++;
 	}
 
-	len = strlen( server );
-	if ( len <= 0 ) {
-		return;
-	}
-
-	// some programs may add ending slash
-	if ( buffer[len-1] == '/' ) {
-		buffer[len-1] = '\0';
-	}
-
-	if ( !*server ) {
+	if ( *server == '\0' ) {
 		return;
 	}
 
@@ -1791,7 +1793,7 @@ static void CL_Connect_f( void ) {
 	}
 
 	Key_SetCatcher( 0 );
-	clc.connectTime = -99999;	// CL_CheckForResend() will fire immediately
+	clc.connectTime = cls.realtime - RECONNECT_TIMEOUT; // CL_CheckForResend() will fire immediately
 	clc.connectPacketCount = 0;
 
 	Cvar_Set( "cl_reconnectArgs", args );
@@ -2417,7 +2419,7 @@ static void CL_CheckForResend( void ) {
 		return;
 	}
 
-	if ( cls.realtime - clc.connectTime < RETRANSMIT_TIMEOUT ) {
+	if ( cls.realtime - clc.connectTime < RECONNECT_TIMEOUT ) {
 		return;
 	}
 
@@ -2829,7 +2831,7 @@ static qboolean CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		clc.challenge = atoi(Cmd_Argv(1));
 		cls.state = CA_CHALLENGING;
 		clc.connectPacketCount = 0;
-		clc.connectTime = -99999;
+		clc.connectTime = cls.realtime - RECONNECT_TIMEOUT;
 
 		// take this address as the new server address.  This allows
 		// a server proxy to hand off connections to multiple servers
@@ -2890,7 +2892,7 @@ static qboolean CL_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 		Netchan_Setup( NS_CLIENT, &clc.netchan, from, Cvar_VariableIntegerValue( "net_qport" ), clc.challenge, clc.compat );
 
 		cls.state = CA_CONNECTED;
-		clc.lastPacketSentTime = cls.realtime - 9999; // send first packet immediately
+		clc.lastPacketSentTime = cls.realtime - RETRANSMIT_TIMEOUT; // send first packet immediately
 		return qtrue;
 	}
 
@@ -3280,8 +3282,8 @@ static void FORMAT_PRINTF(2, 3) QDECL CL_RefPrintf( printParm_t level, const cha
 	switch ( level ) {
 		default: Com_Printf( "%s", msg ); break;
 		case PRINT_DEVELOPER: Com_DPrintf( "%s", msg ); break;
-		case PRINT_WARNING: Com_Printf( S_COLOR_YELLOW "%s", msg ); break;
-		case PRINT_ERROR: Com_Printf( S_COLOR_RED "%s", msg ); break;
+		case PRINT_WARNING: Com_Printf( S_COLOR_WARNING "%s", msg ); break;
+		case PRINT_ERROR: Com_Printf( S_COLOR_ERROR "%s", msg ); break;
 	}
 }
 
@@ -3431,7 +3433,7 @@ void CL_StartHunkUsers( void ) {
 CL_RefMalloc
 ============
 */
-static void *CL_RefMalloc( int size ) {
+static void *CL_RefMalloc( size_t size ) {
 	return Z_TagMalloc( size, TAG_RENDERER );
 }
 
@@ -4045,6 +4047,10 @@ void CL_Init( void ) {
 	cl_timeNudge = Cvar_Get( "cl_timeNudge", "0", CVAR_TEMP );
 	Cvar_CheckRange( cl_timeNudge, "-250", "250", CV_INTEGER );
 	Cvar_SetDescription( cl_timeNudge, "Allows more or less latency to be added in the interest of better smoothness or better responsiveness." );
+
+	cl_localTime = Cvar_Get( "cl_localTime", "0", CVAR_ARCHIVE_ND );
+	Cvar_CheckRange( cl_localTime, "0", "1", CV_INTEGER );
+	Cvar_SetDescription( cl_localTime, "Local time mode: cl.serverTime advances at constant local rate instead of jumping to network-derived values.\n  0 - standard network-synced time (default)\n  1 - smooth local clock, eliminates rendering jitter from network\n" );
 
 	cl_shownet = Cvar_Get ("cl_shownet", "0", CVAR_TEMP );
 	Cvar_SetDescription( cl_shownet, "Toggle the display of current network status." );

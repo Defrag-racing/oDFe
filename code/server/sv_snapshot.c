@@ -118,7 +118,7 @@ static void SV_EmitPacketEntities( const clientSnapshot_t *from, const clientSna
 SV_WriteSnapshotToClient
 ==================
 */
-static void SV_WriteSnapshotToClient( const client_t *client, msg_t *msg ) {
+static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	const clientSnapshot_t	*oldframe;
 	const clientSnapshot_t	*frame;
 	int					lastframe;
@@ -129,28 +129,28 @@ static void SV_WriteSnapshotToClient( const client_t *client, msg_t *msg ) {
 	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
 	// try to use a previous frame as the source for delta compressing the snapshot
-	if ( /* client->deltaMessage <= 0 || */ client->state != CS_ACTIVE ) {
+	if ( client->state != CS_ACTIVE || !client->deltaActive || client->deltaStart - client->messageAcknowledge > 0 ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
 		lastframe = 0;
-	} else if ( client->netchan.outgoingSequence - client->deltaMessage >= (PACKET_BACKUP - 3) ) {
+	} else if ( client->netchan.outgoingSequence - client->messageAcknowledge >= (PACKET_BACKUP - 3) ) {
 		// client hasn't gotten a good message through in a long time
 		if ( com_developer->integer ) {
-			if ( client->deltaMessage != client->netchan.outgoingSequence - ( PACKET_BACKUP + 1 ) ) {
-				Com_Printf( "%s: Delta request from out of date packet.\n", client->name );
-			}
+			Com_Printf( S_COLOR_DEVEL "%s: Delta request from out of date packet.\n", client->name );
 		}
 		oldframe = NULL;
 		lastframe = 0;
 	} else {
 		// we have a valid snapshot to delta from
-		oldframe = &client->frames[ client->deltaMessage & PACKET_MASK ];
-		lastframe = client->netchan.outgoingSequence - client->deltaMessage;
+		oldframe = &client->frames[ client->messageAcknowledge & PACKET_MASK ];
+		lastframe = client->netchan.outgoingSequence - client->messageAcknowledge;
 		// we may refer on outdated frame
 		if ( oldframe->frameNum - svs.lastValidFrame < 0 ) {
 			Com_DPrintf( "%s: Delta request from out of date frame.\n", client->name );
 			oldframe = NULL;
 			lastframe = 0;
+		} else {
+			client->deltaStart = client->messageAcknowledge; // adjust delta range
 		}
 	}
 

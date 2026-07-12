@@ -44,12 +44,23 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 //a console message
 typedef struct bot_consolemessage_s
 {
+	struct bot_consolemessage_s *prev, *next;	//prev and next in list
+	char message[MAX_MESSAGE_SIZE];				//message
+	float time;									//message time
+	int type;									//message type
+	int handle;
+} bot_consolemessage_t;
+
+//a console message, fixed layout, exported to the QVM
+typedef struct bot_consolemessage_qvm_s
+{
 	int handle;
 	float time;									//message time
 	int type;									//message type
 	char message[MAX_MESSAGE_SIZE];				//message
-	struct bot_consolemessage_s *prev, *next;	//prev and next in list
-} bot_consolemessage_t;
+	int prev;									//non-portable/unused
+	int next;									//non-portable/unused
+} bot_consolemessage_qvm_t;
 
 //match variable
 typedef struct bot_matchvariable_s
@@ -79,7 +90,7 @@ void BotQueueConsoleMessage(int chatstate, int type, const char *message);
 //removes the console message from the chat state
 void BotRemoveConsoleMessage(int chatstate, int handle);
 //returns the next console message from the state
-int BotNextConsoleMessage(int chatstate, bot_consolemessage_t *cm);
+int BotNextConsoleMessage(int chatstate, struct bot_consolemessage_qvm_s *cm);
 //returns the number of console messages currently stored in the state
 int BotNumConsoleMessages(int chatstate);
 //selects a chat message of the given type

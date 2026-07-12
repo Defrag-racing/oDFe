@@ -15,6 +15,13 @@ COMPILE_ARCH=$(shell uname -m | sed -e 's/i.86/x86/' | sed -e 's/^arm.*/arm/')
 
 ifeq ($(shell uname -m),arm64)
   COMPILE_ARCH=aarch64
+else
+ifeq ($(COMPILE_ARCH),aarch64)
+  LONG_BIT=$(shell [ -x /usr/bin/getconf ] && getconf LONG_BIT)
+  ifeq ($(LONG_BIT),32)
+    COMPILE_ARCH=arm
+  endif
+endif
 endif
 
 ifeq ($(COMPILE_PLATFORM),mingw32)
@@ -301,6 +308,12 @@ endif
 ifeq ($(ARCH),aarch64)
   HAVE_VM_COMPILED = true
 endif
+ifeq ($(ARCH),ppc64le)
+  HAVE_VM_COMPILED = true
+endif
+ifeq ($(ARCH),ppc64)
+  HAVE_VM_COMPILED = true
+endif
 
 BASE_CFLAGS =
 
@@ -315,7 +328,7 @@ endif
 ifneq ($(USE_RENDERER_DLOPEN),0)
   BASE_CFLAGS += -DUSE_RENDERER_DLOPEN
   BASE_CFLAGS += -DRENDERER_PREFIX=\\\"$(RENDERER_PREFIX)\\\"
-  BASE_CFLAGS += -DRENDERER_DEFAULT="$(RENDERER_DEFAULT)"
+  BASE_CFLAGS += -DRENDERER_DEFAULT=$(RENDERER_DEFAULT)
 endif
 
 ifdef DEFAULT_BASEDIR
@@ -583,12 +596,26 @@ else
   endif
 
   ifeq ($(ARCH),arm)
-    OPTIMIZE += -march=armv7-a
+    ifeq ($(LONG_BIT),32)
+      OPTIMIZE += -march=armv7-a+fp
+    else
+      OPTIMIZE += -march=armv7-a
+    endif
     ARCHEXT = .arm
   endif
 
   ifeq ($(ARCH),aarch64)
     ARCHEXT = .aarch64
+  endif
+
+  ifeq ($(ARCH),ppc64le)
+    ARCHEXT = .ppc64le
+    OPTIMIZE += -mcpu=power8 -mvsx
+  endif
+
+  ifeq ($(ARCH),ppc64)
+    ARCHEXT = .ppc64
+    OPTIMIZE += -mcpu=power8 -mvsx
   endif
 
   SHLIBEXT = so
@@ -1209,6 +1236,12 @@ ifeq ($(HAVE_VM_COMPILED),true)
   ifeq ($(ARCH),aarch64)
     Q3OBJ += $(B)/client/qvm/vm_aarch64.o
   endif
+  ifeq ($(ARCH),ppc64le)
+    Q3OBJ += $(B)/client/qvm/vm_powerpc.o
+  endif
+  ifeq ($(ARCH),ppc64)
+    Q3OBJ += $(B)/client/qvm/vm_powerpc.o
+  endif
 endif
 
 ifeq ($(USE_CURL),1)
@@ -1405,6 +1438,12 @@ ifeq ($(HAVE_VM_COMPILED),true)
   endif
   ifeq ($(ARCH),aarch64)
     Q3DOBJ += $(B)/ded/qvm/vm_aarch64.o
+  endif
+  ifeq ($(ARCH),ppc64le)
+    Q3DOBJ += $(B)/ded/qvm/vm_powerpc.o
+  endif
+  ifeq ($(ARCH),ppc64)
+    Q3DOBJ += $(B)/ded/qvm/vm_powerpc.o
   endif
 endif
 

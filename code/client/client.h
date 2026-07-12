@@ -39,7 +39,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define QKEY_FILE "qkey"
 #define QKEY_SIZE 2048
 
-#define	RETRANSMIT_TIMEOUT	3000	// time between connection packet retransmits
+#define	RECONNECT_TIMEOUT	3000	// time between packet retransmits at CA_CONNECTING / CA_CHALLENGING
+#define	RETRANSMIT_TIMEOUT	1000	// time between packet retransmits at CA_CONNECTED / CA_LOADING
 
 // snapshots are a view of the server at a given time
 typedef struct {
@@ -50,7 +51,7 @@ typedef struct {
 
 	int				messageNum;		// copied from netchan->incoming_sequence
 	int				deltaNum;		// messageNum the delta is from
-	int				ping;			// time from when cmdNum-1 was sent to time packet was reeceived
+	int				ping;			// time from when cmdNum-1 was sent to time packet was received
 	int				areabytes;
 	byte			areamask[MAX_MAP_AREA_BYTES];		// portalarea visibility bits
 
@@ -392,6 +393,7 @@ extern	cvar_t	*cl_shownet;
 extern	cvar_t	*cl_autoNudge;
 extern	cvar_t	*cl_timeNudge;
 extern	cvar_t	*cl_showTimeDelta;
+extern	cvar_t	*cl_localTime;
 
 extern	cvar_t	*com_timedemo;
 extern	cvar_t	*cl_aviFrameRate;

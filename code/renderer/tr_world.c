@@ -380,7 +380,7 @@ static void R_AddWorldSurface( msurface_t *surf, int dlightBits ) {
 
 #ifdef USE_PMLIGHT
 #ifdef USE_LEGACY_DLIGHTS
-	if ( r_dlightMode->integer ) 
+	if ( R_GetDlightMode() ) 
 #endif
 	{
 		surf->vcVisible = tr.viewCount;
@@ -536,7 +536,7 @@ void R_AddBrushModelSurfaces ( trRefEntity_t *ent ) {
 
 #ifdef USE_PMLIGHT
 #ifdef USE_LEGACY_DLIGHTS
-	if ( r_dlightMode->integer ) 
+	if ( R_GetDlightMode() ) 
 #endif
 	{
 		dlight_t *dl;
@@ -659,7 +659,7 @@ static void R_RecursiveWorldNode( mnode_t *node, unsigned int planeBits, unsigne
 		newDlights[1] = 0;
 #ifdef USE_LEGACY_DLIGHTS
 #ifdef USE_PMLIGHT
-		if ( !r_dlightMode->integer )
+		if ( !R_GetDlightMode() )
 #endif
 		if ( dlightBits ) {
 			int	i;
@@ -789,8 +789,12 @@ qboolean R_inPVS( const vec3_t p1, const vec3_t p2 ) {
 	const byte	*vis;
 
 	leaf = R_PointInLeaf( p1 );
+	if ( leaf->cluster < 0 )
+		return qfalse;
 	vis = ri.CM_ClusterPVS( leaf->cluster );
 	leaf = R_PointInLeaf( p2 );
+	if ( leaf->cluster < 0 )
+		return qfalse;
 
 	if ( !(vis[leaf->cluster>>3] & (1<<(leaf->cluster&7))) ) {
 		return qfalse;
@@ -864,7 +868,7 @@ static void R_MarkLeaves (void) {
 		}
 
 		// check for door connection
-		if ( (tr.refdef.areamask[leaf->area>>3] & (1<<(leaf->area&7)) ) ) {
+		if ( leaf->area >= 0 && (tr.refdef.areamask[leaf->area>>3] & (1<<(leaf->area&7))) ) {
 			continue;		// not visible
 		}
 
@@ -916,7 +920,7 @@ void R_AddWorldSurfaces( void ) {
 
 #ifdef USE_PMLIGHT
 #ifdef USE_LEGACY_DLIGHTS
-	if ( !r_dlightMode->integer )
+	if ( !R_GetDlightMode() )
 		return;
 #endif // USE_LEGACY_DLIGHTS
 
