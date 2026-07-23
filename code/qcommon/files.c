@@ -1675,7 +1675,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				}
 			}
 		}
-		if ( ( pak = FS_LoadMapPak( filename ) ) != NULL ) {
+		if ( ( pak = FS_LoadMapPak( filename ) ) != NULL && FS_PakIsPure( pak ) ) {
 			pakFile = FS_FindFileInPak( pak, filename, fullHash );
 			if ( pakFile != NULL ) {
 				return pakFile->size;
@@ -1744,8 +1744,10 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	}
 
 	// on-demand map pak: maps/<name>.bsp missing from the search path may
-	// live in <fs_mapPakDir>/<name>.pk3 - load just that one pak and retry
-	if ( ( pak = FS_LoadMapPak( filename ) ) != NULL ) {
+	// live in <fs_mapPakDir>/<name>.pk3 - load just that one pak and retry.
+	// The pure check matters only for clients on pure servers: an on-demand
+	// pak outside the server's pak list must stay unusable there.
+	if ( ( pak = FS_LoadMapPak( filename ) ) != NULL && FS_PakIsPure( pak ) ) {
 		pakFile = FS_FindFileInPak( pak, filename, fullHash );
 		if ( pakFile != NULL ) {
 			return FS_OpenFileInPak( file, pak, pakFile, uniqueFILE );
