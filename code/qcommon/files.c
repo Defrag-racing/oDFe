@@ -307,6 +307,7 @@ static	cvar_t		*fs_steampath;
 
 static	cvar_t		*fs_basepath;
 static	cvar_t		*fs_basegame;
+static	cvar_t		*fs_mapPakDir;
 static	cvar_t		*fs_copyfiles;
 static	cvar_t		*fs_gamedirvar;
 #ifndef USE_HANDLE_CACHE
@@ -1566,6 +1567,30 @@ static qboolean FS_BannedPakFile( const char *filename )
 }
 
 
+static pack_t *FS_LoadMapPak( const char *filename );
+
+/*
+===========
+FS_FindFileInPak
+
+Case and separator insensitive search for a file inside a single pak.
+===========
+*/
+static fileInPack_t *FS_FindFileInPak( pack_t *pak, const char *filename, long fullHash ) {
+	fileInPack_t *pakFile;
+
+	pakFile = pak->hashTable[ fullHash & ( pak->hashSize - 1 ) ];
+	while ( pakFile != NULL ) {
+		if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
+			return pakFile;
+		}
+		pakFile = pakFile->next;
+	}
+
+	return NULL;
+}
+
+
 /*
 ===========
 FS_FOpenFileRead
@@ -1650,6 +1675,12 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				}
 			}
 		}
+		if ( ( pak = FS_LoadMapPak( filename ) ) != NULL && FS_PakIsPure( pak ) ) {
+			pakFile = FS_FindFileInPak( pak, filename, fullHash );
+			if ( pakFile != NULL ) {
+				return pakFile->size;
+			}
+		}
 		return -1;
 	}
 
@@ -1709,6 +1740,17 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 			}
 
 			return FS_FileLength( f->handleFiles.file.o );
+		}
+	}
+
+	// on-demand map pak: maps/<name>.bsp missing from the search path may
+	// live in <fs_mapPakDir>/<name>.pk3 - load just that one pak and retry.
+	// The pure check matters only for clients on pure servers: an on-demand
+	// pak outside the server's pak list must stay unusable there.
+	if ( ( pak = FS_LoadMapPak( filename ) ) != NULL && FS_PakIsPure( pak ) ) {
+		pakFile = FS_FindFileInPak( pak, filename, fullHash );
+		if ( pakFile != NULL ) {
+			return FS_OpenFileInPak( file, pak, pakFile, uniqueFILE );
 		}
 	}
 
@@ -3185,6 +3227,96 @@ static void FS_FreePak( pack_t *pak )
 
 /*
 =================
+FS_LoadMapPak
+
+On-demand map pak loading (fs_mapPakDir): when maps/<name>.bsp is not in
+the search path, probe <fs_mapPakDir>/<name>.pk3 and insert just that one
+pak. This lets a dedicated server run against a huge per-map pk3 pool
+(even on a network mount) without scanning thousands of pk3s on every FS
+restart - only the map actually being loaded costs anything. The inserted
+pak is a regular search path entry, so pure/referenced/download lists
+treat it normally, and the next FS_Restart releases it again.
+
+Returns NULL when disabled, not a plain map path, or the pk3 is missing.
+=================
+*/
+static pack_t *FS_LoadMapPak( const char *filename ) {
+	const searchpath_t *sp;
+	searchpath_t *search;
+	pack_t *pak;
+	const char *ospath;
+	char mapname[MAX_QPATH];
+	int len;
+
+	if ( fs_mapPakDir == NULL || fs_mapPakDir->string[0] == '\0' ) {
+		return NULL;
+	}
+
+	// accept "maps/<name>.bsp" only, without nested directories
+	if ( Q_stricmpn( filename, "maps/", 5 ) ) {
+		return NULL;
+	}
+	len = (int) strlen( filename );
+	if ( len <= 5 + 4 || Q_stricmp( filename + len - 4, ".bsp" ) ) {
+		return NULL;
+	}
+	if ( len - 5 - 4 >= (int) sizeof( mapname ) ) {
+		return NULL;
+	}
+	if ( strchr( filename + 5, '/' ) != NULL || strchr( filename + 5, '\\' ) != NULL ) {
+		return NULL;
+	}
+
+	// strip "maps/" prefix and ".bsp" extension
+	Q_strncpyz( mapname, filename + 5, len - 5 - 4 + 1 );
+
+	ospath = FS_BuildOSPath( fs_mapPakDir->string, va( "%s.pk3", mapname ), NULL );
+
+	// already inserted (this or an earlier probe) - then the file simply
+	// is not inside it, do not insert the same pak twice
+	for ( sp = fs_searchpaths; sp != NULL; sp = sp->next ) {
+		if ( sp->pack != NULL && !FS_FilenameCompare( sp->pack->pakFilename, ospath ) ) {
+			return NULL;
+		}
+	}
+
+	pak = FS_LoadZipFile( ospath );
+	if ( pak == NULL ) {
+		// map pool files are conventionally lowercase
+		Q_strlwr( mapname );
+		ospath = FS_BuildOSPath( fs_mapPakDir->string, va( "%s.pk3", mapname ), NULL );
+		pak = FS_LoadZipFile( ospath );
+		if ( pak == NULL ) {
+			return NULL;
+		}
+	}
+
+	// same bookkeeping as FS_AddGameDirectory does for scanned paks
+	pak->pakGamename = basegames[0]; // primary base game, e.g. "baseq3"
+	pak->index = fs_packCount;
+	pak->referenced = 0;
+	pak->exclude = qfalse;
+
+	fs_packFiles += pak->numfiles;
+	fs_packCount++;
+
+	search = Z_TagMalloc( sizeof( *search ), TAG_SEARCH_PACK );
+	Com_Memset( search, 0, sizeof( *search ) );
+	search->pack = pak;
+
+	search->next = fs_searchpaths;
+	fs_searchpaths = search;
+
+	if ( fs_debug->integer ) {
+		Com_Printf( "FS_LoadMapPak: %s\n", ospath );
+	}
+
+	return pak;
+}
+
+
+/*
+=================
 FS_CompareZipChecksum
 
 Compares whether the given pak file matches a referenced checksum
@@ -3485,6 +3617,27 @@ static char **FS_ListFilteredFiles( const char *path, const char *extension, con
 			}
 			Sys_FreeFileList( sysFiles );
 		}		
+	}
+
+	// fs_mapPakDir: the per-map pk3 pool is not in the search path, so
+	// surface its contents in map listings as maps/<name>.bsp entries
+	if ( fs_mapPakDir != NULL && fs_mapPakDir->string[0] != '\0' && filter == NULL
+			&& path != NULL && extension != NULL
+			&& !Q_stricmp( path, "maps" ) && !Q_stricmp( extension, ".bsp" ) ) {
+		char **mapFiles;
+		char mapName[MAX_QPATH];
+		int numMapFiles, n;
+
+		mapFiles = Sys_ListFiles( fs_mapPakDir->string, ".pk3", NULL, &numMapFiles, 0 );
+		for ( n = 0; n < numMapFiles; n++ ) {
+			length = (int) strlen( mapFiles[n] );
+			if ( length > 4 && length < (int) sizeof( mapName ) && !Q_stricmp( mapFiles[n] + length - 4, ".pk3" ) ) {
+				Q_strncpyz( mapName, mapFiles[n], sizeof( mapName ) );
+				strcpy( mapName + length - 4, ".bsp" );
+				nfiles = FS_AddFileToList( mapName, list, nfiles );
+			}
+		}
+		Sys_FreeFileList( mapFiles );
 	}
 
 	// return a copy of the list
@@ -4718,6 +4871,8 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the installation folder of the game." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
+	fs_mapPakDir = Cvar_Get( "fs_mapPakDir", "", CVAR_INIT | CVAR_PROTECTED );
+	Cvar_SetDescription( fs_mapPakDir, "Directory with one pk3 per map (<mapname>.pk3). The directory is never scanned into the search path; a pak is loaded on demand when its maps/<mapname>.bsp is requested, and map listings include the whole pool. Intended for dedicated servers with a large (possibly network-mounted) map pool. Empty = disabled." );
 	fs_steampath = Cvar_Get( "fs_steampath", "", CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 
 	/* parse fs_basegame cvar */
