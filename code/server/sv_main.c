@@ -760,7 +760,13 @@ static void SVC_StatusDefrag_ParseUIDs( const char *scoreOutput, int *uidMap, in
 }
 
 static void SVC_Status_Defrag( const netadr_t *from ) {
-	char	player[MAX_NAME_LENGTH + 64]; // score + ping + name
+	// One full player line: score + ping + clientNum + quoted name + spectating
+	// + tld + color1 + uid + model + headmodel. color1/model/headmodel are
+	// raw userinfo values (up to MAX_INFO_VALUE each) - the old
+	// MAX_NAME_LENGTH+64 buffer truncated long lines, losing the closing
+	// quote and the trailing \n, which glued the next player onto this one
+	// and made parsers drop both.
+	char	player[MAX_NAME_LENGTH + 3 * MAX_INFO_VALUE + 64];
 	char	status[MAX_PACKETLEN];
 	char	*s;
 	int	i;
