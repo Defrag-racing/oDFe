@@ -716,10 +716,18 @@ static void SVC_Status( const netadr_t *from ) {
 }
 
 
+#ifdef DEDICATED
 /*
 ================
 SVC_Status_Defrag
 Responds with detailed server info: CS_SERVERINFO and the scoreboard.
+
+Dedicated builds only. Nothing in the client asks for getdfstatus - its own
+browser uses getstatus and reads the reply in CL_ServerStatusResponse - so the
+only case this ever served in a client build was a listen server being queried
+from outside, which is not something anyone does with defrag. Keeping it out of
+the client is a few kilobytes and, more to the point, keeps server-side work
+out of a binary that is mainly a client.
 ================
 */
 static void SVC_StatusDefrag_NoFlush( const char *buffer ) {
@@ -941,6 +949,7 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 
 	NET_OutOfBandPrint( NS_SERVER, from, "statusResponse\n%s\n%s", infostring, status );
 }
+#endif // DEDICATED
 
 
 /*
@@ -1167,8 +1176,10 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 
 	if (!Q_stricmp(c, "getstatus")) {
 		SVC_Status( from );
+#ifdef DEDICATED
 	} else if (!Q_stricmp(c, "getdfstatus")) {
 		SVC_Status_Defrag( from );
+#endif
 	} else if (!Q_stricmp(c, "getinfo")) {
 		SVC_Info( from );
 	} else if (!Q_stricmp(c, "getchallenge")) {
