@@ -307,7 +307,9 @@ static	cvar_t		*fs_steampath;
 
 static	cvar_t		*fs_basepath;
 static	cvar_t		*fs_basegame;
+#ifdef DEDICATED
 static	cvar_t		*fs_mapPakDir;
+#endif
 static	cvar_t		*fs_copyfiles;
 static	cvar_t		*fs_gamedirvar;
 #ifndef USE_HANDLE_CACHE
@@ -1567,13 +1569,19 @@ static qboolean FS_BannedPakFile( const char *filename )
 }
 
 
+#ifdef DEDICATED
 static pack_t *FS_LoadMapPak( const char *filename );
+#endif
 
+#ifdef DEDICATED
 /*
 ===========
 FS_FindFileInPak
 
 Case and separator insensitive search for a file inside a single pak.
+
+Only the on-demand map pak lookup calls this, so it follows it into dedicated
+builds - a client would carry it unused.
 ===========
 */
 static fileInPack_t *FS_FindFileInPak( pack_t *pak, const char *filename, long fullHash ) {
@@ -1589,6 +1597,7 @@ static fileInPack_t *FS_FindFileInPak( pack_t *pak, const char *filename, long f
 
 	return NULL;
 }
+#endif // DEDICATED
 
 
 /*
@@ -1675,12 +1684,14 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				}
 			}
 		}
+#ifdef DEDICATED
 		if ( ( pak = FS_LoadMapPak( filename ) ) != NULL && FS_PakIsPure( pak ) ) {
 			pakFile = FS_FindFileInPak( pak, filename, fullHash );
 			if ( pakFile != NULL ) {
 				return pakFile->size;
 			}
 		}
+#endif
 		return -1;
 	}
 
@@ -1743,6 +1754,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 		}
 	}
 
+#ifdef DEDICATED
 	// on-demand map pak: maps/<name>.bsp missing from the search path may
 	// live in <fs_mapPakDir>/<name>.pk3 - load just that one pak and retry.
 	// The pure check matters only for clients on pure servers: an on-demand
@@ -1753,6 +1765,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 			return FS_OpenFileInPak( file, pak, pakFile, uniqueFILE );
 		}
 	}
+#endif
 
 #ifdef FS_MISSING
 	if ( missingFiles ) {
@@ -3225,9 +3238,13 @@ static void FS_FreePak( pack_t *pak )
 }
 
 
+#ifdef DEDICATED
 /*
 =================
 FS_LoadMapPak
+
+Dedicated builds only - the whole point of it is a server-side map pool, and
+a client has no business carrying the code or advertising the cvar.
 
 On-demand map pak loading (fs_mapPakDir): when maps/<name>.bsp is not in
 the search path, probe <fs_mapPakDir>/<name>.pk3 and insert just that one
@@ -3313,6 +3330,7 @@ static pack_t *FS_LoadMapPak( const char *filename ) {
 
 	return pak;
 }
+#endif // DEDICATED
 
 
 /*
@@ -3619,6 +3637,7 @@ static char **FS_ListFilteredFiles( const char *path, const char *extension, con
 		}		
 	}
 
+#ifdef DEDICATED
 	// fs_mapPakDir: the per-map pk3 pool is not in the search path, so
 	// surface its contents in map listings as maps/<name>.bsp entries
 	if ( fs_mapPakDir != NULL && fs_mapPakDir->string[0] != '\0' && filter == NULL
@@ -3639,6 +3658,7 @@ static char **FS_ListFilteredFiles( const char *path, const char *extension, con
 		}
 		Sys_FreeFileList( mapFiles );
 	}
+#endif // DEDICATED
 
 	// return a copy of the list
 	*numfiles = nfiles;
@@ -4871,8 +4891,10 @@ static void FS_Startup( void ) {
 	Cvar_SetDescription( fs_basepath, "Write-protected CVAR specifying the path to the installation folder of the game." );
 	fs_basegame = Cvar_Get( "fs_basegame", BASEGAME, CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_basegame, "Write-protected CVAR specifying the path to the base game(s) folder(s), separated by '/'." );
+#ifdef DEDICATED
 	fs_mapPakDir = Cvar_Get( "fs_mapPakDir", "", CVAR_INIT | CVAR_PROTECTED );
 	Cvar_SetDescription( fs_mapPakDir, "Directory with one pk3 per map (<mapname>.pk3). The directory is never scanned into the search path; a pak is loaded on demand when its maps/<mapname>.bsp is requested, and map listings include the whole pool. Intended for dedicated servers with a large (possibly network-mounted) map pool. Empty = disabled." );
+#endif // DEDICATED
 	fs_steampath = Cvar_Get( "fs_steampath", "", CVAR_INIT | CVAR_PROTECTED | CVAR_PRIVATE );
 
 	/* parse fs_basegame cvar */
