@@ -774,6 +774,9 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 	playerState_t	*ps;
 	int		statusLength;
 	int		playerLength;
+	int		firstClient;
+	int		totalClients = 0;
+	char	challenge[129];
 	char	tld[3];
 	char	infostring[MAX_INFO_STRING+160]; // add some space for challenge string
 	char		scoreBuffer[4096];
@@ -809,6 +812,19 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 	if ( strlen( Cmd_Argv( 1 ) ) > 128 )
 		return;
 
+	// Both arguments have to be taken now, before anything else runs. The
+	// score command below goes through Cmd_ExecuteString, which tokenizes
+	// "score" over the top of this packet's arguments, and every Cmd_Argv
+	// after that returns an empty string. The challenge echo has been reading
+	// its value from after that point and quietly setting an empty one ever
+	// since - Info_SetValueForKey drops a key given an empty value, which is
+	// why no reply has ever carried a challenge back.
+	Q_strncpyz( challenge, Cmd_Argv( 1 ), sizeof( challenge ) );
+	firstClient = atoi( Cmd_Argv( 2 ) );
+	if ( firstClient < 0 ) {
+		firstClient = 0;
+	}
+
 	// get mDd UIDs by internally executing the mod's "score" command
 	memset( uidMap, 0, sizeof( uidMap ) );
 	Com_BeginRedirect( scoreBuffer, sizeof( scoreBuffer ), SVC_StatusDefrag_NoFlush );
@@ -820,13 +836,68 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 
 	// echo back the parameter to status. so master servers can use it as a challenge
 	// to prevent timed spoofed reply packets that add ghost servers
-	Info_SetValueForKey( infostring, "challenge", Cmd_Argv( 1 ) );
+	Info_SetValueForKey( infostring, "challenge", challenge );
+
+	// A busy server does not fit in one packet, and the players who do not fit
+	// are simply absent from the reply with nothing to say so. The loop below
+	// stops at MAX_PACKETLEN and the caller cannot tell a quiet server from a
+	// full one that ran out of room.
+	//
+	// Worked from a real server, measured 2026-08-04. Its infostring is 701
+	// bytes over 34 keys, and the header costs 16, so the players get
+	// 1396 - 717 = 679. A line there averaged 74 bytes:
+	//
+	//     24072 44 0 "^84ity^4.^0Andreich" -1 "KZ" "nospecpm" 14514 "sarge" "sarge"
+	//
+	// which is nine players. The server runs sv_maxclients 32, as did all 32
+	// servers that answered that day. Fill it and twenty-three people are
+	// missing from the reply, every time it is asked, permanently.
+	//
+	// Two things that look like cheaper fixes and are not. Raising
+	// MAX_PACKETLEN only moves the problem down a layer: past the MTU the
+	// datagram is fragmented by IP, and losing one fragment loses the whole
+	// reply, which is worse than losing the tail of a list. And trimming the
+	// lines cannot reach 32 either - the separators alone are 20 bytes, nine
+	// spaces plus a newline plus five pairs of quotes, and five numeric fields
+	// cannot be shorter than a digit each, so 25 bytes is the floor for this
+	// format. 32 x 25 is 800, and 800 + 717 is over 1396 before a single name
+	// is written.
+	//
+	// Nor does throwing the format away. A line of nothing but slot and name -
+	// no ping, no score, no country, no uid, no model, which is to say none of
+	// the reason this call exists - leaves around 15 bytes for the name at 32
+	// players on a 700 byte infostring. A quarter of the nicknames online that
+	// day were already longer than that, colour codes included.
+	//
+	// So it can be asked for in parts: "getdfstatus <challenge> <first>"
+	// answers with the players from that client slot on, and reports the total
+	// and where this part began, which is what tells the asker whether to come
+	// back for the rest. Both directions stay compatible - a server without
+	// this ignores the argument and replies as it always did, and an asker
+	// that never requests a second part sees exactly what it saw before. One
+	// request is still one reply, so the rate limit above bounds the
+	// amplification exactly as it did.
+	//
+	// The argument is a client slot and not a count of the players sent so
+	// far, because slots hold still and counts do not: somebody leaving
+	// between two parts renumbers every player behind them, and whoever
+	// landed on the boundary is skipped entirely. The asker continues from
+	// one past the last slot it saw, which is the same answer whatever
+	// happened in between.
+	for ( i = 0; i < sv.maxclients; i++ ) {
+		if ( svs.clients[i].state >= CS_CONNECTED ) {
+			totalClients++;
+		}
+	}
+
+	Info_SetValueForKey( infostring, "clients", va( "%i", totalClients ) );
+	Info_SetValueForKey( infostring, "clientsFrom", va( "%i", firstClient ) );
 
 	s = status;
 	status[0] = '\0';
 	statusLength = strlen( infostring ) + 16; // strlen( "statusResponse\n\n" )
 
-	for ( i = 0; i < sv.maxclients; i++ ) {
+	for ( i = firstClient; i < sv.maxclients; i++ ) {
 		cl = &svs.clients[i];
 		if ( cl->state >= CS_CONNECTED ) {
 
