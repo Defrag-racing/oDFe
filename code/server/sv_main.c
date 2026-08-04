@@ -716,10 +716,18 @@ static void SVC_Status( const netadr_t *from ) {
 }
 
 
+#ifdef DEDICATED
 /*
 ================
 SVC_Status_Defrag
 Responds with detailed server info: CS_SERVERINFO and the scoreboard.
+
+Dedicated builds only. Nothing in the client asks for getdfstatus - its own
+browser uses getstatus and reads the reply in CL_ServerStatusResponse - so the
+only case this ever served in a client build was a listen server being queried
+from outside, which is not something anyone does with defrag. Keeping it out of
+the client is a few kilobytes and, more to the point, keeps server-side work
+out of a binary that is mainly a client.
 ================
 */
 static void SVC_StatusDefrag_NoFlush( const char *buffer ) {
@@ -838,6 +846,21 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 	// to prevent timed spoofed reply packets that add ghost servers
 	Info_SetValueForKey( infostring, "challenge", challenge );
 
+	// sv_cheats is CVAR_SYSTEMINFO, so it is not part of the serverinfo string
+	// copied above and no server browser has ever been able to see it. A server
+	// running with cheats enabled is not a place where a time means anything,
+	// and until now the only way to find out was to join and try.
+	//
+	// Only sent when they are on. The key costs twelve bytes of a packet that
+	// already runs out of room before a full server fits, and paying that on
+	// every reply to describe the state that 99% of servers are in is waste.
+	// The three cases stay distinguishable because clientsFrom below is always
+	// present on an engine new enough to answer this at all: no clientsFrom
+	// means we know nothing, clientsFrom without this key means cheats are off.
+	if ( Cvar_VariableIntegerValue( "sv_cheats" ) ) {
+		Info_SetValueForKey( infostring, "sv_cheats", "1" );
+	}
+
 	// A busy server does not fit in one packet, and the players who do not fit
 	// are simply absent from the reply with nothing to say so. The loop below
 	// stops at MAX_PACKETLEN and the caller cannot tell a quiet server from a
@@ -926,6 +949,7 @@ static void SVC_Status_Defrag( const netadr_t *from ) {
 
 	NET_OutOfBandPrint( NS_SERVER, from, "statusResponse\n%s\n%s", infostring, status );
 }
+#endif // DEDICATED
 
 
 /*
@@ -1152,8 +1176,10 @@ static void SV_ConnectionlessPacket( const netadr_t *from, msg_t *msg ) {
 
 	if (!Q_stricmp(c, "getstatus")) {
 		SVC_Status( from );
+#ifdef DEDICATED
 	} else if (!Q_stricmp(c, "getdfstatus")) {
 		SVC_Status_Defrag( from );
+#endif
 	} else if (!Q_stricmp(c, "getinfo")) {
 		SVC_Info( from );
 	} else if (!Q_stricmp(c, "getchallenge")) {
