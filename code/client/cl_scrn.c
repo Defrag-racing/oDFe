@@ -608,7 +608,7 @@ This is called every frame, and can also be called explicitly to flush
 text to the screen.
 ==================
 */
-void SCR_UpdateScreen( void ) {
+static void SCR_UpdateScreenEx( qboolean present ) {
 	static int recursive;
 	static int framecount;
 	static int next_frametime;
@@ -647,12 +647,37 @@ void SCR_UpdateScreen( void ) {
 			SCR_DrawScreenField( STEREO_CENTER );
 		}
 
-		if ( com_speeds->integer ) {
-			re.EndFrame( &time_frontend, &time_backend );
-		} else {
-			re.EndFrame( NULL, NULL );
+		if ( present ) {
+			if ( com_speeds->integer ) {
+				re.EndFrame( &time_frontend, &time_backend );
+			} else {
+				re.EndFrame( NULL, NULL );
+			}
 		}
 	}
 
 	recursive = 0;
+}
+
+
+/*
+==================
+SCR_UpdateScreen / SCR_UpdateScreenHidden
+
+The cgame calls trap_UpdateScreen() while it loads, and the engine answers it
+by drawing a frame - which re-enters the cgame's frame call. That re-entry is
+not only a repaint: it is where the engine tells the cgame it is watching a
+demo, and DeFRaG's cgame will not accept a demo recorded by another game
+version until it has been told. So during a demo seek re-init we must still
+draw, but the finished frame must not reach the screen or the loading screen
+flashes over the demo. SCR_UpdateScreenHidden draws without presenting; the
+queued commands are flushed by the next real frame, which paints over them.
+==================
+*/
+void SCR_UpdateScreen( void ) {
+	SCR_UpdateScreenEx( qtrue );
+}
+
+void SCR_UpdateScreenHidden( void ) {
+	SCR_UpdateScreenEx( qfalse );
 }
