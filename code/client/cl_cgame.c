@@ -538,10 +538,17 @@ static intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		// We can't call Com_EventLoop here, a restart will crash and this _does_ happen
 		// if there is a map change while we are downloading at pk3.
 		// ZOID
-		// Demo backward-seek re-init: suppress the cgame's loading-screen draw so
-		// the last rendered demo frame stays on screen until the target frame is
-		// drawn - no loading-screen flash / jumpcut while scrubbing.
-		if ( !cl_demoReinit ) {
+		// Demo backward-seek re-init: draw, but keep the frame off the screen.
+		// The draw itself matters - it is the cgame frame call that tells the
+		// mod a demo is playing, and DeFRaG's cgame refuses a demo whose game
+		// version is not its own until it knows. Skipping it outright (which is
+		// what this used to do) made every demo recorded by an older DeFRaG die
+		// on the first seek with "Client/Server game mismatch". Not presenting
+		// keeps the last demo frame on screen, so there is still no
+		// loading-screen flash while scrubbing.
+		if ( cl_demoReinit ) {
+			SCR_UpdateScreenHidden();
+		} else {
 			SCR_UpdateScreen();
 		}
 		return 0;
