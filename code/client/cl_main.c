@@ -697,6 +697,9 @@ static void CL_DemoCompleted( void ) {
 }
 
 
+/* Reads a demo's length straight out of the file; defined below. */
+static int CL_DemoScanLength( fileHandle_t f );
+
 /*
 =================
 CL_ReadDemoMessage
@@ -1086,8 +1089,143 @@ static void CL_PlayDemo_f( void ) {
 	// demo then freezes at its end instead of disconnecting, and builds the
 	// keyframe cache for smooth seeking.
 	cl_demoPlayer = ( Cvar_VariableIntegerValue( "in_controlPort" ) > 0 ) ? qtrue : qfalse;
+
+	// Player mode: read the length out of the file now, so the transport bar
+	// is right from the first frame and nothing has to be measured by playing
+	// the demo to its end and seeking back.
+	if ( cl_demoPlayer ) {
+		cl_demoTotalTime = CL_DemoScanLength( clc.demofile );
+	}
 }
 
+
+
+/*
+=================
+CL_DemoScanLength
+
+How long is this demo, without playing it?
+
+The player has to know, or it cannot draw a transport bar - and the only way
+it had was to play the demo to its end and seek back, which restarts the mod
+at the seek point and shows the run beginning twice in the first second.
+
+A demo is a flat list of `[sequence: 4][length: 4][payload]` blocks, so the
+last one can be reached by reading two integers and skipping, per block, with
+nothing decoded. Only that last block is decompressed, and only as far as the
+snapshot header, whose first field is the server time. Blocks are walked
+backwards from the end until one yields a time, because the final block can be
+a server command or the end-of-demo marker rather than a snapshot.
+
+Returns 0 when the file says nothing useful, which leaves the old
+measure-by-playing path as it was.
+=================
+*/
+#define DEMO_SCAN_BLOCKS 64	/* how far back to look for the last snapshot */
+
+static int CL_DemoScanLength( fileHandle_t f ) {
+	int		offsets[ DEMO_SCAN_BLOCKS ];
+	int		count = 0, total = 0;
+	int		here, seq, len, i;
+	int		resume;
+	msg_t	buf;
+	static byte bufData[ MAX_MSGLEN_BUF ];
+
+	if ( f == FS_INVALID_HANDLE ) {
+		return 0;
+	}
+
+	resume = FS_FTell( f );
+	FS_Seek( f, 0, FS_SEEK_SET );
+
+	// index pass: header only, payloads skipped
+	while ( 1 ) {
+		here = FS_FTell( f );
+
+		if ( FS_Read( &seq, 4, f ) != 4 || FS_Read( &len, 4, f ) != 4 ) {
+			break;
+		}
+
+		seq = LittleLong( seq );
+		len = LittleLong( len );
+
+		// -1/-1 is the end marker the recorder writes; anything out of range
+		// is a truncated or corrupt file and ends the walk just as well.
+		if ( seq == -1 || len <= 0 || len > MAX_MSGLEN ) {
+			break;
+		}
+
+		offsets[ count % DEMO_SCAN_BLOCKS ] = here;
+		count++;
+
+		if ( FS_Seek( f, len, FS_SEEK_CUR ) != 0 ) {
+			break;
+		}
+	}
+
+	// decode pass: newest block first, stop at the first snapshot found
+	for ( i = 1; i <= DEMO_SCAN_BLOCKS && i <= count && total == 0; i++ ) {
+		int cmd, guard;
+
+		FS_Seek( f, offsets[ ( count - i ) % DEMO_SCAN_BLOCKS ], FS_SEEK_SET );
+
+		if ( FS_Read( &seq, 4, f ) != 4 || FS_Read( &len, 4, f ) != 4 ) {
+			break;
+		}
+
+		len = LittleLong( len );
+
+		if ( len <= 0 || len > MAX_MSGLEN ) {
+			break;
+		}
+
+		MSG_Init( &buf, bufData, MAX_MSGLEN );
+		buf.cursize = len;
+
+		if ( FS_Read( buf.data, len, f ) != len ) {
+			break;
+		}
+
+		buf.readcount = 0;
+		MSG_Bitstream( &buf );
+		MSG_ReadLong( &buf );	// reliable acknowledge
+
+		// Walk only what can legally sit in front of a snapshot. Anything
+		// else (a gamestate, a download) means this block is not one to
+		// measure from, and the loop moves to the block before it.
+		for ( guard = 0; guard < MAX_RELIABLE_COMMANDS + 2; guard++ ) {
+			if ( buf.readcount > buf.cursize ) {
+				break;
+			}
+
+			cmd = MSG_ReadByte( &buf );
+
+			if ( cmd == svc_nop ) {
+				continue;
+			}
+
+			if ( cmd == svc_serverCommand ) {
+				MSG_ReadLong( &buf );	// command sequence
+				MSG_ReadString( &buf );
+				continue;
+			}
+
+			if ( cmd == svc_snapshot ) {
+				int t = MSG_ReadLong( &buf );
+
+				if ( t > 0 ) {
+					total = t;
+				}
+			}
+
+			break;
+		}
+	}
+
+	FS_Seek( f, resume, FS_SEEK_SET );
+
+	return total;
+}
 
 /*
 ==================
